@@ -40,5 +40,5 @@ set "ZIP=%HERE%RealBodyShapeZombiesPatch-v%VERSION%.zip"
 if exist "%ZIP%" del "%ZIP%"
 set "LIST="
 for %%f in ("%HERE%dist\*") do set LIST=!LIST! "%%~nxf"
-tar -a -c -f "%ZIP%" -C "%HERE%dist" !LIST! || exit /b 1
+tar --force-local -a -c -f "%ZIP%" -C "%HERE%dist" !LIST! || exit /b 1
 echo release  : %ZIP%
