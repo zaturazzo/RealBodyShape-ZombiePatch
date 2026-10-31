@@ -4,7 +4,7 @@ Unofficial companion for the Steam Workshop mod **Real Body Shape** (id 38307304
 Zombies and their corpses get their own body shapes (thin / normal / fat / obese, fixed per zombie) instead of
 copying the player's shape.
 
-Full manual, troubleshooting and source code: see the project page on GitHub (README.md there).
+Full manual, troubleshooting and source code: https://github.com/zaturazzo/RealBodyShape-ZombiePatch
 
 ## Quick install
 1. Subscribe to **Real Body Shape** on the Workshop (the zombie body files are inside it).
