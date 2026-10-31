@@ -19,7 +19,8 @@ obese**, fixed per zombie, while your character keeps following its real weight.
 ## 1. Requirements
 
 - Windows, Steam version of Project Zomboid **Build 42** (developed on 42.21).
-- The **Real Body Shape** mod, version **0.3 or newer**, subscribed and enabled (the zombie body files ship inside it).
+- The **Real Body Shape** Workshop item, version **0.3.1 or newer**. It contains two mods: **Real Body Shape** and
+  **Real Body Shape - Zombie Bodies** (the zombie body variants). Enable both.
 - **No Java installation needed** – the patch uses the Java runtime that comes with the game (`jre64` folder).
 - Singleplayer. Not tested in multiplayer.
 
@@ -48,7 +49,7 @@ obese**, fixed per zombie, while your character keeps following its real weight.
    ```
    install.bat "D:\SteamLibrary\steamapps\common\ProjectZomboid"
    ```
-4. Start the game, make sure **Real Body Shape** is enabled in *Mods*, load your save.
+4. Start the game, enable **both** mods in *Mods* (*Real Body Shape* and *Real Body Shape - Zombie Bodies*), load your save.
 5. Walk around: zombies now come in different builds. Kill a fat one – the corpse stays fat.
 
 ### What exactly was changed on your PC
@@ -64,7 +65,7 @@ Open `%USERPROFILE%\Zomboid\console.txt` after loading a save and look for:
 ```
 [RBS hook] ready (classpath) - zombies and corpses use RBS_Zombie*_{Thin,Normal,Fat,Obese} model scripts; game classes match the patch source
 [RBS hook] config: enabled=true thin/normal/fat/obese=15/55/22/8
-[RealBodyShape] zombie bodies: patch active, config enabled
+[RealBodyShape] zombie bodies: patch active, Zombie Bodies mod on, config enabled
 ```
 `status.bat` shows the same information without starting the game (launcher entry, jar, whether the patch still
 matches the installed game version, mod found).
@@ -109,7 +110,7 @@ restore `ProjectZomboid64.json.rbs_backup` by hand.
 | `class ... not found in projectzomboid.jar` | Same: the game changed; wait for a patch update. |
 | Game does not start after install | Run `uninstall.bat` (or restore the `.rbs_backup`). Then post `console.txt`. |
 | No `[RBS hook]` lines in `console.txt` | The game was started before `install.bat` finished, or the launcher was reset by a game update. Run `status.bat`, then `install.bat`. |
-| `[RBS hook] WARNING model script RBS_Zombie... not found` | Real Body Shape mod is disabled or older than 0.3. Enable / update it. |
+| `[RBS hook] WARNING model script RBS_Zombie... not found` | The mod *Real Body Shape - Zombie Bodies* is not enabled (it is part of the Real Body Shape Workshop item, v0.3.1+). |
 | `[RBS hook] WARNING the game's classes changed ... STALE` | Game updated while the old jar stayed in the launcher (rare). Run `install.bat`. |
 | Zombies still look like the player | Check the three console lines in section 3; corpses created before the patch keep their old look until redrawn. |
 | Skeleton zombies unchanged | Intended – skeletons use their own mesh. |
@@ -126,7 +127,7 @@ restore `ProjectZomboid64.json.rbs_backup` by hand.
 - `rbs_patch.jar` (patched classes + hook) is listed **first** in the launcher's classpath, so the JVM loads these
   copies instead of the game's – nothing in the game folder is modified.
 - `RBSHook` uses only public game methods through reflection. For a zombie it asks the script manager for
-  `RBS_Zombie{Female,Male}_{Thin,Normal,Fat,Obese}` – model scripts and meshes that ship inside the Real Body Shape
+  `RBS_Zombie{Female,Male}_{Thin,Normal,Fat,Obese}` – model scripts and meshes from the *Real Body Shape - Zombie Bodies*
   mod – and otherwise calls the original method. Any failure falls back to the original behaviour.
 - The jar stores SHA-256 hashes of the game classes it was built from; both `status.bat` and the hook at runtime
   compare them with the installed game and warn when they differ.
@@ -169,7 +170,7 @@ MIT – see `LICENSE`. Project Zomboid is a trademark of The Indie Stone; this p
 
 ## ต้องมีอะไร
 - Windows + Project Zomboid Build 42 (Steam)
-- mod **Real Body Shape** เวอร์ชัน 0.3 ขึ้นไป (ไฟล์ร่างซอมบี้อยู่ใน mod แล้ว)
+- Workshop item **Real Body Shape** 0.3.1 ขึ้นไป ซึ่งมี mod 2 ตัว: Real Body Shape และ **Real Body Shape - Zombie Bodies** (ต้องเปิดทั้งคู่)
 - **ไม่ต้องลง Java** ใช้ Java ที่มากับเกม (`jre64`)
 
 ## ติดตั้ง
@@ -177,7 +178,7 @@ MIT – see `LICENSE`. Project Zomboid is a trademark of The Indie Stone; this p
 2. **ปิดเกม**
 3. ดับเบิลคลิก `install.bat` → หน้าต่างดำจะพิมพ์ `patched` 2 บรรทัด, `verified` 2 บรรทัด, `written`, `launcher`, `DONE`
    ถ้าขึ้น `Project Zomboid folder not found` ให้เปิด cmd แล้วรัน `install.bat "D:\...\steamapps\common\ProjectZomboid"`
-4. เปิดเกม → Mods → เปิด Real Body Shape → โหลดเซฟ
+4. เปิดเกม → Mods → เปิดทั้ง Real Body Shape และ Real Body Shape - Zombie Bodies → โหลดเซฟ
 5. เช็คใน `%USERPROFILE%\Zomboid\console.txt` ต้องมี `[RBS hook] ready (classpath) ...` และ `[RealBodyShape] zombie bodies: patch active`
 
 สิ่งที่ถูกแก้ในเครื่อง: สร้าง `%USERPROFILE%\Zomboid\RealBodyShape\rbs_patch.jar` (สร้างจาก `projectzomboid.jar` ของคุณเอง)
@@ -196,7 +197,7 @@ Steam จะเขียน `ProjectZomboid64.json` ทับ แพตช์ห
 
 ## ปัญหาที่พบบ่อย
 - เกมเปิดไม่ขึ้นหลังติดตั้ง → `uninstall.bat` แล้วส่ง `console.txt` มาแจ้ง
-- `WARNING model script RBS_Zombie... not found` → mod Real Body Shape ปิดอยู่หรือเก่ากว่า 0.3
+- `WARNING model script RBS_Zombie... not found` → ยังไม่ได้เปิด mod Real Body Shape - Zombie Bodies
 - ไม่มีบรรทัด `[RBS hook]` เลย → เกมเปิดก่อน install เสร็จ หรือเกมเพิ่งอัปเดต → รัน `status.bat` แล้ว `install.bat`
 - ซอมบี้โครงกระดูกไม่เปลี่ยน → ตั้งใจ มันใช้โมเดลของตัวเองอยู่แล้ว
 

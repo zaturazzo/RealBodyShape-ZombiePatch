@@ -91,7 +91,7 @@ public final class MakePatch {
         }
         System.out.println("written  : " + jar + " (" + Files.size(jar) / 1024 + " KB)");
         editLauncher(launcher, jar, true);
-        System.out.println("DONE. Start the game with the Real Body Shape mod enabled and check console.txt for '[RBS hook] ready'.");
+        System.out.println("DONE. Start the game, enable BOTH mods 'Real Body Shape' and 'Real Body Shape - Zombie Bodies', then check console.txt for '[RBS hook] ready'.");
     }
 
     /** define the patched classes in a child loader and link them, so the JVM verifier checks the new bytecode */
@@ -233,7 +233,9 @@ public final class MakePatch {
         }
         Path marker = Marker.path();
         System.out.println("marker   : " + marker + " -> " + (Files.exists(marker) ? new String(Files.readAllBytes(marker), StandardCharsets.UTF_8).replace("\n", " ") : "absent (game not running, or patch never ran)"));
-        System.out.println("mod      : the zombie body variants ship inside the Real Body Shape mod (Workshop id 3830730496, v0.3+) - keep it enabled");
+        Path mod = Paths.get(System.getProperty("user.home"), "Zomboid", "mods", "RealBodyShapeZombies", "mod.info");
+        System.out.println("mod      : enable 'Real Body Shape - Zombie Bodies' in the game's mod list (it comes with the Real Body Shape Workshop item)"
+                + (Files.exists(mod) ? " [also found in ~/Zomboid/mods]" : ""));
     }
 
     // ------------------------------------------------------------------ game folder

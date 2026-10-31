@@ -140,7 +140,7 @@ public final class RBSHook {
             script = getModelScript.invoke(scriptManager, name);
         }
         if (script == null) {
-            warn("model script " + base + " not found - is the Real Body Shape mod (0.3 or newer) enabled?");
+            warn("model script " + base + " not found - enable the mod 'Real Body Shape - Zombie Bodies' (it comes with the Real Body Shape Workshop item)");
             return null;
         }
         return getLoadedModel.invoke(modelManager, name);
