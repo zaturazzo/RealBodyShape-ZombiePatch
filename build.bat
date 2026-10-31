@@ -38,5 +38,7 @@ for %%f in ("%HERE%src\rbs\*.java") do (
 echo built    : %HERE%dist\rbs_agent.jar
 set "ZIP=%HERE%RealBodyShapeZombiesPatch-v%VERSION%.zip"
 if exist "%ZIP%" del "%ZIP%"
-powershell -NoProfile -Command "Compress-Archive -Path '%HERE%dist\*' -DestinationPath '%ZIP%'" || exit /b 1
+set "LIST="
+for %%f in ("%HERE%dist\*") do set LIST=!LIST! "%%~nxf"
+tar -a -c -f "%ZIP%" -C "%HERE%dist" !LIST! || exit /b 1
 echo release  : %ZIP%
