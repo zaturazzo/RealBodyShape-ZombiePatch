@@ -5,33 +5,42 @@ import java.lang.instrument.Instrumentation;
 import java.security.ProtectionDomain;
 
 /**
- * RealBodyShape zombie-body patch (local use only, not a Workshop item).
- * Two game methods pick the shared human body mesh; both are redirected to RBSHook so zombies (alive, and as
- * corpses rendered through DeadBodyAtlas) get their own body variants while the player keeps the shared mesh:
- *   ModelManager.getBodyModel(IsoGameCharacter)  -> getBodyModel$rbs + RBSHook.getBodyModel(mgr, chr)
- *   HumanVisual.getModel()                        -> getModel$rbs     + RBSHook.visualModel(visual)
+ * RealBodyShape zombie patch (local use only, not a Workshop item).
+ * Four game methods are redirected to RBSHook so zombies get their own bodies and (optionally) missing limbs:
+ *   ModelManager.getBodyModel(IsoGameCharacter)   -> getBodyModel$rbs       + RBSHook.getBodyModel(mgr, chr)
+ *   HumanVisual.getModel()                         -> getModel$rbs           + RBSHook.visualModel(visual)      (corpses)
+ *   AnimationPlayer.getSkinTransforms(SkinningData)-> getSkinTransforms$rbs  + RBSHook.skinTransforms(player, data)
+ *   AnimatedModel.getAnimationPlayer()             -> getAnimationPlayer$rbs + RBSHook.animatedPlayer(model)    (corpse atlas)
  * Two ways to apply the same patch:
- *   1. classpath mode (default, used by zombie_patch.py): rbs_patch.jar holds the pre-patched classes and is
- *      listed first in ProjectZomboid64.json "classpath", so it shadows the game's copies.
+ *   1. classpath mode (default, used by zombie_patch.py / install.bat): rbs_patch.jar holds the pre-patched classes
+ *      and is listed first in ProjectZomboid64.json "classpath", so it shadows the game's copies.
  *   2. javaagent mode: -javaagent:rbs_agent.jar patches while loading. Works with java.exe, but the game's own
  *      ProjectZomboid64.exe launcher cannot load the JVM's instrument library, so 1. is what gets installed.
  * The game files on disk are never modified.
  */
 public final class RBSAgent {
-    public static final String VERSION = "4";
+    public static final String VERSION = "5";
     static final String HOOK_CLASS = "rbs/RBSHook";
-    static final String CAST = "zombie/core/skinnedmodel/model/Model";
+    static final String MODEL = "zombie/core/skinnedmodel/model/Model";
     static final String RENAMED_BODY = "getBodyModel$rbs";
     static final String RENAMED_VISUAL = "getModel$rbs";
+    static final String RENAMED_SKIN = "getSkinTransforms$rbs";
+    static final String RENAMED_ANIMATED = "getAnimationPlayer$rbs";
 
-    /** {class (internal name), method, descriptor, renamed-to, hook method, hook descriptor} */
+    /** {class (internal name), method, descriptor, renamed-to, hook method, hook descriptor, cast class of the result} */
     static final String[][] SPECS = {
         { "zombie/core/skinnedmodel/ModelManager", "getBodyModel",
           "(Lzombie/characters/IsoGameCharacter;)Lzombie/core/skinnedmodel/model/Model;", RENAMED_BODY,
-          "getBodyModel", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" },
+          "getBodyModel", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", MODEL },
         { "zombie/core/skinnedmodel/visual/HumanVisual", "getModel",
           "()Lzombie/core/skinnedmodel/model/Model;", RENAMED_VISUAL,
-          "visualModel", "(Ljava/lang/Object;)Ljava/lang/Object;" },
+          "visualModel", "(Ljava/lang/Object;)Ljava/lang/Object;", MODEL },
+        { "zombie/core/skinnedmodel/animation/AnimationPlayer", "getSkinTransforms",
+          "(Lzombie/core/skinnedmodel/model/SkinningData;)[Lorg/lwjgl/util/vector/Matrix4f;", RENAMED_SKIN,
+          "skinTransforms", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", "[Lorg/lwjgl/util/vector/Matrix4f;" },
+        { "zombie/core/skinnedmodel/advancedanimation/AnimatedModel", "getAnimationPlayer",
+          "()Lzombie/core/skinnedmodel/animation/AnimationPlayer;", RENAMED_ANIMATED,
+          "animatedPlayer", "(Ljava/lang/Object;)Ljava/lang/Object;", "zombie/core/skinnedmodel/animation/AnimationPlayer" },
     };
     static volatile boolean agentActive;
 
@@ -63,7 +72,7 @@ public final class RBSAgent {
     }
 
     static byte[] patch(String[] spec, byte[] bytes) throws java.io.IOException {
-        return ClassPatcher.patch(bytes, spec[1], spec[2], spec[3], HOOK_CLASS, spec[4], spec[5], CAST);
+        return ClassPatcher.patch(bytes, spec[1], spec[2], spec[3], HOOK_CLASS, spec[4], spec[5], spec[6]);
     }
 
     static void log(String s) {

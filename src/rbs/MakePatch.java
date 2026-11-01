@@ -28,7 +28,7 @@ import java.util.zip.ZipOutputStream;
  *
  *   java -cp "rbs_agent.jar;<game>/projectzomboid.jar" rbs.MakePatch install|uninstall|status <game dir>
  *
- * install  : patches ModelManager + HumanVisual from the user's own projectzomboid.jar (never redistributed),
+ * install  : patches the 4 game classes in RBSAgent.SPECS from the user's own projectzomboid.jar (never redistributed),
  *            verifies them with the JVM, writes ~/Zomboid/RealBodyShape/rbs_patch.jar and lists that jar first in
  *            the "classpath" of <game>/ProjectZomboid64.json (backup: ProjectZomboid64.json.rbs_backup).
  * uninstall: removes the jar from the launcher config again (the game is back to normal).
@@ -91,7 +91,7 @@ public final class MakePatch {
         }
         System.out.println("written  : " + jar + " (" + Files.size(jar) / 1024 + " KB)");
         editLauncher(launcher, jar, true);
-        System.out.println("DONE. Start the game, enable BOTH mods 'Real Body Shape' and 'Real Body Shape - Zombie Bodies', then check console.txt for '[RBS hook] ready'.");
+        System.out.println("DONE. Start the game, enable the mods 'Real Body Shape' and 'Real Body Shape - Zombie Bodies' (+ 'Zombie Dismemberment' if you like), then check console.txt for '[RBS hook] ready'.");
     }
 
     /** define the patched classes in a child loader and link them, so the JVM verifier checks the new bytecode */

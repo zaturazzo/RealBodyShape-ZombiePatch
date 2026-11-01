@@ -14,12 +14,13 @@ import java.util.Enumeration;
 import java.util.Objects;
 
 /**
- * Targets of the two patched game methods (see RBSAgent.SPECS).
+ * Targets of the patched game methods (see RBSAgent.SPECS).
  * Zombies (not skeletons, not animals) get one of the body variants defined by the RealBodyShapeZombies mod
  * (model scripts RBS_Zombie{Female,Male}_{Thin,Normal,Fat,Obese}). The variant is a stable hash of the zombie's
  * HumanVisual (skin, hair, beard, hair colour, outfit) so a corpse keeps the body it had while "alive":
  * DeadBodyAtlas renders corpses from a copy of that visual, where no character id is available.
  * Weights come from ~/Zomboid/Lua/RealBodyShape_zombies.txt (written by the mod's Lua).
+ * Missing limbs (RealBodyShapeLimbs mod) are handled by {@link Limbs} through two more hooks.
  * Everything else, and every failure, falls through to the original methods.
  * Only public game members are used, through reflection, so nothing here depends on game internals.
  */
@@ -30,10 +31,11 @@ public final class RBSHook {
     private static volatile boolean ready, failed;
     private static Method isAnimal, isZombie, isSkeleton, chrVisual, getLoadedModel, getModelScript;
     private static Method vIsZombie, vIsSkeleton, vIsFemale, vSkin, vBodyHair, vHairModel, vBeardModel, vHairColor, vOutfit, outfitName;
+    private static Method cRedInt, cGreenInt, cBlueInt;
     private static Field fR, fG, fB, fFemaleModel, fMaleModel;
     private static Object scriptManager, modelManager;
-    private static Class<?> zombieClass, visualClass;
-    private static Method origBody, origVisual;
+    private static Class<?> zombieClass, visualClass, skinningDataClass;
+    private static Method origBody, origVisual, origSkin, origAnimated;
 
     private static volatile boolean enabled = true;
     private static volatile int[] weights = { 15, 55, 22, 8 };
@@ -64,6 +66,28 @@ public final class RBSHook {
             warn("corpse body failed: " + t);
         }
         return orig;
+    }
+
+    // ---------------- AnimationPlayer.getSkinTransforms(data) ----------------
+    public static Object skinTransforms(Object player, Object data) {
+        Object t = call(origSkin(player), player, data);
+        try {
+            Limbs.apply(player, data, t);
+        } catch (Throwable e) {
+            warn("limbs failed: " + e);
+        }
+        return t;
+    }
+
+    // ---------------- AnimatedModel.getAnimationPlayer() ----------------
+    public static Object animatedPlayer(Object model) {
+        Object p = call(origAnimated(model), model);
+        try {
+            Limbs.remember(p, model);
+        } catch (Throwable e) {
+            warn("animated model failed: " + e);
+        }
+        return p;
     }
 
     private static Object call(Method m, Object target, Object... args) {
@@ -103,16 +127,40 @@ public final class RBSHook {
         return o;
     }
 
+    private static Method origSkin(Object player) {
+        Method o = origSkin;
+        if (o == null) {
+            try {
+                Class<?> sd = Class.forName("zombie.core.skinnedmodel.model.SkinningData", false, player.getClass().getClassLoader());
+                o = player.getClass().getMethod(RBSAgent.RENAMED_SKIN, sd);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("RBS hook: original AnimationPlayer.getSkinTransforms missing", e);
+            }
+            origSkin = o;
+        }
+        return o;
+    }
+
+    private static Method origAnimated(Object model) {
+        Method o = origAnimated;
+        if (o == null) {
+            try {
+                o = model.getClass().getMethod(RBSAgent.RENAMED_ANIMATED);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("RBS hook: original AnimatedModel.getAnimationPlayer missing", e);
+            }
+            origAnimated = o;
+        }
+        return o;
+    }
+
     private static Object zombieModel(Object chr) throws Exception {
         if (failed) return null;
         if (!ready) init();
         if (failed) return null;
         loadConfig();
         if (!enabled) return null;
-        if (chr == null || !zombieClass.isInstance(chr)) return null;
-        if ((Boolean) isAnimal.invoke(chr)) return null;
-        if (!(Boolean) isZombie.invoke(chr)) return null;
-        if ((Boolean) isSkeleton.invoke(chr)) return null;
+        if (!isLiveZombie(chr)) return null;
         Object visual = chrVisual.invoke(chr);
         if (visual == null) return null;
         return variantModel((Boolean) vIsFemale.invoke(visual), visualHash(visual));
@@ -146,6 +194,31 @@ public final class RBSHook {
         return getLoadedModel.invoke(modelManager, name);
     }
 
+    // ---------------- shared helpers (also used by Limbs) ----------------
+
+    /** zombie character (not animal, not skeleton); false for anything else */
+    static boolean isLiveZombie(Object chr) throws Exception {
+        if (chr == null || !zombieClass.isInstance(chr)) return false;
+        if ((Boolean) isAnimal.invoke(chr)) return false;
+        if (!(Boolean) isZombie.invoke(chr)) return false;
+        return !(Boolean) isSkeleton.invoke(chr);
+    }
+
+    static Object visualOf(Object chr) throws Exception {
+        return chrVisual.invoke(chr);
+    }
+
+    static boolean isZombieVisual(Object visual) throws Exception {
+        if (visual == null || !visualClass.isInstance(visual)) return false;
+        if (!(Boolean) vIsZombie.invoke(visual)) return false;
+        return !(Boolean) vIsSkeleton.invoke(visual);
+    }
+
+    static boolean ensureInit() {
+        if (!ready && !failed) init();
+        return ready;
+    }
+
     /** stable identity of a zombie that survives death: what it looks like */
     static int visualHash(Object visual) throws Exception {
         int h = 17;
@@ -161,6 +234,29 @@ public final class RBSHook {
         }
         Object outfit = vOutfit.invoke(visual);
         if (outfit != null) h = h * 31 + Objects.hashCode(outfitName.invoke(outfit));
+        return h;
+    }
+
+    /**
+     * Limb seed: identical to seed(seedString(v)) in RealBodyShapeLimbs.lua, so the Lua side (blood, crawling)
+     * and this side (hidden bones) pick the same limbs for the same zombie. Integer-only inputs, 32-bit arithmetic
+     * that Lua doubles reproduce exactly.
+     */
+    static long seedOf(Object visual) throws Exception {
+        Object col = vHairColor.invoke(visual);
+        int r = 0, g = 0, b = 0;
+        if (col != null) {
+            r = (Integer) cRedInt.invoke(col);
+            g = (Integer) cGreenInt.invoke(col);
+            b = (Integer) cBlueInt.invoke(col);
+        }
+        Object outfit = vOutfit.invoke(visual);
+        Object oname = outfit == null ? null : outfitName.invoke(outfit);
+        Object hair = vHairModel.invoke(visual), beard = vBeardModel.invoke(visual);
+        String s = vSkin.invoke(visual) + "|" + vBodyHair.invoke(visual) + "|" + (hair == null ? "" : hair) + "|"
+                + (beard == null ? "" : beard) + "|" + r + "|" + g + "|" + b + "|" + (oname == null ? "" : oname);
+        long h = 0;
+        for (int i = 0; i < s.length(); i++) h = (h * 31 + s.charAt(i)) & 0xFFFFFFFFL;
         return h;
     }
 
@@ -193,6 +289,9 @@ public final class RBSHook {
             fR = color.getField("r");
             fG = color.getField("g");
             fB = color.getField("b");
+            cRedInt = color.getMethod("getRedInt");
+            cGreenInt = color.getMethod("getGreenInt");
+            cBlueInt = color.getMethod("getBlueInt");
             modelManager = mm.getField("instance").get(null);
             fFemaleModel = mm.getField("femaleModel");
             fMaleModel = mm.getField("maleModel");
@@ -201,7 +300,7 @@ public final class RBSHook {
             getModelScript = sm.getMethod("getModelScript", String.class);
             ready = true;
             String note = checkSource(cl);
-            log("ready (" + mode + ") - zombies and corpses use RBS_Zombie*_{Thin,Normal,Fat,Obese} model scripts; " + note);
+            log("ready (" + mode + ") v" + RBSAgent.VERSION + " - zombies and corpses use RBS_Zombie*_{Thin,Normal,Fat,Obese} model scripts; " + note);
             Marker.write(true, mode, note);
         } catch (Throwable t) {
             failed = true;
@@ -236,7 +335,7 @@ public final class RBSHook {
                 }
             }
             if (!stale.isEmpty()) {
-                warn("the game's classes changed (game update?) but the stale patched copies are in use - run tools/bodyshape/zombie_patch.py --patch --install again:" + stale);
+                warn("the game's classes changed (game update?) but the stale patched copies are in use - run install.bat (or zombie_patch.py --patch --install) again:" + stale);
                 return "STALE: game classes changed, rebuild the patch";
             }
             return checked == 0 ? "single copies on classpath" : "game classes match the patch source";
