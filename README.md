@@ -95,8 +95,8 @@ restarting the game. For a Workshop-installed mod the file is at
 `<Steam>\steamapps\workshop\content\108600\3830730496\mods\RealBodyShape\42\media\lua\client\RealBodyShape.lua`
 (Workshop updates overwrite it, so keep a note of your values).
 
-Each zombie's variant is derived from how it looks (skin, hair, beard, hair colour, outfit), which is why a corpse
-keeps the body its zombie had, and why a zombie keeps its body after you leave and come back.
+Each zombie's variant is derived from how it looks (skin, body hair, hair, beard, hair colour - the things the game
+saves with a corpse), which is why a corpse keeps the body its zombie had, also after reloading the save.
 
 ## 4b. Dismembered zombies (optional, patch v5 or newer)
 
@@ -169,8 +169,8 @@ restore `ProjectZomboid64.json.rbs_backup` by hand.
   the joint pinch into a stump. The same palette skins every 3D clothing piece, so sleeves, gloves, trousers and
   shoes vanish with the limb - no extra meshes needed. `AnimatedModel.getAnimationPlayer()` is hooked only to learn
   which visual `DeadBodyAtlas` is drawing, so corpses get the same treatment. The mod's Lua and the hook compute the
-  same seed from the zombie's looks (skin, body hair, hair, beard, hair colour, outfit), so blood, crawling and the
-  hidden bones always agree.
+  same seed from the zombie's looks (skin, body hair, hair, beard, hair colour - never the outfit, which corpses do
+  not keep in the save), so blood, crawling and the hidden bones always agree, also after reloading.
 
 ## 9. FAQ
 

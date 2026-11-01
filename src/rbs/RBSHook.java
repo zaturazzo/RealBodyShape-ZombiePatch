@@ -219,7 +219,11 @@ public final class RBSHook {
         return ready;
     }
 
-    /** stable identity of a zombie that survives death: what it looks like */
+    /**
+     * stable identity of a zombie that survives death AND saving: what it looks like. Only fields the game stores
+     * with a corpse (skin, body hair, hair, beard, hair colour) - the Outfit object is not saved with corpses, so a
+     * corpse loaded from a save has none and anything derived from it would change after a reload.
+     */
     static int visualHash(Object visual) throws Exception {
         int h = 17;
         h = h * 31 + (Integer) vSkin.invoke(visual);
@@ -232,15 +236,13 @@ public final class RBSHook {
             h = h * 31 + Math.round(fG.getFloat(col) * 255);
             h = h * 31 + Math.round(fB.getFloat(col) * 255);
         }
-        Object outfit = vOutfit.invoke(visual);
-        if (outfit != null) h = h * 31 + Objects.hashCode(outfitName.invoke(outfit));
         return h;
     }
 
     /**
      * Limb seed: identical to seed(seedString(v)) in RealBodyShapeLimbs.lua, so the Lua side (blood, crawling)
      * and this side (hidden bones) pick the same limbs for the same zombie. Integer-only inputs, 32-bit arithmetic
-     * that Lua doubles reproduce exactly.
+     * that Lua doubles reproduce exactly. Same saved-with-the-corpse fields as visualHash (no outfit).
      */
     static long seedOf(Object visual) throws Exception {
         Object col = vHairColor.invoke(visual);
@@ -250,11 +252,9 @@ public final class RBSHook {
             g = (Integer) cGreenInt.invoke(col);
             b = (Integer) cBlueInt.invoke(col);
         }
-        Object outfit = vOutfit.invoke(visual);
-        Object oname = outfit == null ? null : outfitName.invoke(outfit);
         Object hair = vHairModel.invoke(visual), beard = vBeardModel.invoke(visual);
         String s = vSkin.invoke(visual) + "|" + vBodyHair.invoke(visual) + "|" + (hair == null ? "" : hair) + "|"
-                + (beard == null ? "" : beard) + "|" + r + "|" + g + "|" + b + "|" + (oname == null ? "" : oname);
+                + (beard == null ? "" : beard) + "|" + r + "|" + g + "|" + b;
         long h = 0;
         for (int i = 0; i < s.length(); i++) h = (h * 31 + s.charAt(i)) & 0xFFFFFFFFL;
         return h;
