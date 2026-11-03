@@ -20,7 +20,8 @@ import java.util.Objects;
  * HumanVisual (skin, hair, beard, hair colour, outfit) so a corpse keeps the body it had while "alive":
  * DeadBodyAtlas renders corpses from a copy of that visual, where no character id is available.
  * Weights come from ~/Zomboid/Lua/RealBodyShape_zombies.txt (written by the mod's Lua).
- * Missing limbs (RealBodyShapeLimbs mod) are handled by {@link Limbs} through two more hooks.
+ * Missing limbs (RealBodyShapeLimbs mod) are handled by {@link Limbs} through two more hooks; the same skin
+ * matrix hook lets {@link Fit} push a variant zombie's clothes out or in to match its body.
  * Everything else, and every failure, falls through to the original methods.
  * Only public game members are used, through reflection, so nothing here depends on game internals.
  */
@@ -71,6 +72,11 @@ public final class RBSHook {
     // ---------------- AnimationPlayer.getSkinTransforms(data) ----------------
     public static Object skinTransforms(Object player, Object data) {
         Object t = call(origSkin(player), player, data);
+        try {
+            Fit.apply(player, data, t);
+        } catch (Throwable e) {
+            warn("zombie clothes failed: " + e);
+        }
         try {
             Limbs.apply(player, data, t);
         } catch (Throwable e) {
@@ -180,7 +186,12 @@ public final class RBSHook {
     }
 
     private static Object variantModel(boolean female, int hash) throws Exception {
-        String base = "RBS_Zombie" + (female ? "Female" : "Male") + "_" + NAMES[variant(hash)];
+        return variantModelOf(female, variant(hash));
+    }
+
+    /** the loaded body model of a variant (index of NAMES), null when the Zombie Bodies mod is off */
+    static Object variantModelOf(boolean female, int v) throws Exception {
+        String base = "RBS_Zombie" + (female ? "Female" : "Male") + "_" + NAMES[v];
         String name = base;
         Object script = getModelScript.invoke(scriptManager, name);
         if (script == null) {
@@ -217,6 +228,22 @@ public final class RBSHook {
     static boolean ensureInit() {
         if (!ready && !failed) init();
         return ready;
+    }
+
+    /** zombie bodies switched on in the config (the mod's Lua writes it) and the hook works */
+    static boolean zombiesEnabled() {
+        if (!ensureInit()) return false;
+        loadConfig();
+        return enabled;
+    }
+
+    static boolean isFemaleVisual(Object visual) throws Exception {
+        return (Boolean) vIsFemale.invoke(visual);
+    }
+
+    /** the body variant (index of NAMES) this visual gets */
+    static int variantOf(Object visual) throws Exception {
+        return variant(visualHash(visual));
     }
 
     /**

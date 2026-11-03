@@ -3,7 +3,7 @@
 Unofficial companion for the Steam Workshop item **Real Body Shape** (id 3830730496, version 0.3.3 or newer), which
 contains three mods: *Real Body Shape*, *Real Body Shape - Zombie Bodies* and *Real Body Shape - Zombie Dismemberment*.
 - Zombie Bodies: zombies and their corpses get their own body shapes (thin / normal / fat / obese, fixed per zombie)
-  instead of copying the player's shape.
+  instead of copying the player's shape. With patch v5 or newer their clothes follow that body.
 - Zombie Dismemberment (optional): a few percent of zombies are missing a hand, forearm, arm or leg (legless ones
   crawl), clothes included, corpses too. Patch v5 or newer.
 

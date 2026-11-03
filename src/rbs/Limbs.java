@@ -78,11 +78,12 @@ final class Limbs {
         if ((mask & R_LEG) != 0) collapse(tr, b, 7);
     }
 
-    /** AnimatedModel.getAnimationPlayer() returned p: remember which visual that player animates. */
+    /**
+     * AnimatedModel.getAnimationPlayer() returned p: remember which visual that player animates. Also done with
+     * dismemberment off, because Fit needs it for the clothes of corpses.
+     */
     static void remember(Object player, Object model) throws Exception {
         if (failed || player == null || model == null) return;
-        loadConfig();
-        if (!enabled) return;
         if (!ready) init();
         if (failed) return;
         Method m = amVisual;
@@ -92,6 +93,11 @@ final class Limbs {
         }
         Object visual = m.invoke(model);
         if (visual != null) animated.put(player, visual);
+    }
+
+    /** the visual an AnimatedModel's player draws (corpses in DeadBodyAtlas), null if unknown */
+    static Object animatedVisual(Object player) {
+        return player == null ? null : animated.get(player);
     }
 
     // ---------------- who misses what ----------------
