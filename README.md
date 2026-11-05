@@ -38,10 +38,10 @@ obese**, fixed per zombie, while your character keeps following its real weight.
 3. Double-click **`install.bat`**. A console window shows what happens:
    ```
    game     : D:\SteamLibrary\steamapps\common\ProjectZomboid
-   patched  : zombie/core/skinnedmodel/ModelManager.getBodyModel (66343 -> 66641 bytes)
-   patched  : zombie/core/skinnedmodel/visual/HumanVisual.getModel (30333 -> 30567 bytes)
-   patched  : zombie/core/skinnedmodel/animation/AnimationPlayer.getSkinTransforms (64133 -> 64444 bytes)
-   patched  : zombie/core/skinnedmodel/advancedanimation/AnimatedModel.getAnimationPlayer (49592 -> 49877 bytes)
+   patched  : zombie/core/skinnedmodel/ModelManager (66343 -> 67170 bytes)
+   patched  : zombie/core/skinnedmodel/visual/HumanVisual (30333 -> 30567 bytes)
+   patched  : zombie/core/skinnedmodel/animation/AnimationPlayer (64133 -> 64444 bytes)
+   patched  : zombie/core/skinnedmodel/advancedanimation/AnimatedModel (49592 -> 50163 bytes)
    verified : zombie.core.skinnedmodel.ModelManager
    verified : zombie.core.skinnedmodel.visual.HumanVisual
    verified : zombie.core.skinnedmodel.animation.AnimationPlayer
@@ -171,6 +171,15 @@ restore `ProjectZomboid64.json.rbs_backup` by hand.
   which visual `DeadBodyAtlas` is drawing, so corpses get the same treatment. The mod's Lua and the hook compute the
   same seed from the zombie's looks (skin, body hair, hair, beard, hair colour - never the outfit, which corpses do
   not keep in the save), so blood, crawling and the hidden bones always agree, also after reloading.
+- **Zombie clothes (v5):** the main mod reshapes *your* 3D clothes by rewriting their model files, and every
+  character wearing the same piece loads the same file, so zombies of your sex used to wear your shape (and a fat
+  zombie's clothes were then pushed out a second time). The *Zombie Bodies* mod ships untouched copies of those
+  files under `media/models_X/RBSClean/`; `ModelManager.newAdditionalModelInstance(...)` is hooked so a zombie's
+  clothing model loads the copy instead (`rbs.Clean`; only when the copy is the same file type the game would load).
+  Corpses build their clothes in `AnimatedModel.addClothingItem(...)` without a character, so that method is hooked
+  too, to tell `Clean` the clothes belong to a zombie. On top of the copies, `rbs.Fit` multiplies a per-bone
+  bind-space map (Normal body -> the zombie's variant) into the skin matrices of every non-body mesh, so the
+  clothes follow thin / fat / obese bodies.
 
 ## 9. FAQ
 
@@ -179,8 +188,8 @@ restore `ProjectZomboid64.json.rbs_backup` by hand.
 **Linux / macOS?** The launcher scripts differ (`projectzomboid.sh`). The Java part would work; the installer is
 Windows-only for now.
 
-**Tomb's Player Body?** Works. Tomb users who built the local `RealBodyShapeTomb` data pack get Tomb-shaped zombie
-variants; everyone else gets vanilla-shaped ones.
+**A mod that replaces the body?** The zombie variants are made from the vanilla body, so zombies get
+vanilla-shaped bodies.
 
 **Is this safe / allowed?** It is an unofficial modification of how the game is launched, fully reversible, with no
 game code redistributed and no advantage in multiplayer. It is not endorsed by The Indie Stone. Use at your own risk.
@@ -192,7 +201,8 @@ Requires a JDK 11 or newer (the bundled game runtime has no compiler).
 build.bat            -> dist\rbs_agent.jar  and  RealBodyShapeZombiesPatch-vN.zip
 ```
 Sources: `src/rbs/` – `ClassPatcher` (class-file rewriter), `RBSAgent` (patch specs, also usable as `-javaagent`
-with a plain `java.exe`), `RBSHook` (runtime logic), `Limbs` (missing limbs, v5), `MakePatch` (installer), `Marker`, `PatchTest` / `CpCheck`
+with a plain `java.exe`), `RBSHook` (runtime logic), `Limbs` (missing limbs, v5), `Fit` / `FitTable` / `Clean`
+(zombie clothes, v5), `MakePatch` (installer), `Marker`, `PatchTest` / `CpCheck`
 (offline checks). The GitHub Actions workflow builds the same zip on every push so the released jar can be
 reproduced from source.
 

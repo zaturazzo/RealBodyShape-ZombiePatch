@@ -28,7 +28,7 @@ import java.util.zip.ZipOutputStream;
  *
  *   java -cp "rbs_agent.jar;<game>/projectzomboid.jar" rbs.MakePatch install|uninstall|status <game dir>
  *
- * install  : patches the 4 game classes in RBSAgent.SPECS from the user's own projectzomboid.jar (never redistributed),
+ * install  : patches the game classes in RBSAgent.SPECS from the user's own projectzomboid.jar (never redistributed),
  *            verifies them with the JVM, writes ~/Zomboid/RealBodyShape/rbs_patch.jar and lists that jar first in
  *            the "classpath" of <game>/ProjectZomboid64.json (backup: ProjectZomboid64.json.rbs_backup).
  * uninstall: removes the jar from the launcher config again (the game is back to normal).
@@ -72,13 +72,13 @@ public final class MakePatch {
         Map<String, byte[]> patched = new HashMap<>();
         List<String> hashes = new ArrayList<>();
         try (JarFile jf = new JarFile(gameJar.toFile())) {
-            for (String[] spec : RBSAgent.SPECS) {
-                JarEntry e = jf.getJarEntry(spec[0] + ".class");
-                if (e == null) throw new IOException("class " + spec[0] + " not found in projectzomboid.jar (unsupported game version)");
+            for (String cls : RBSAgent.targets()) {
+                JarEntry e = jf.getJarEntry(cls + ".class");
+                if (e == null) throw new IOException("class " + cls + " not found in projectzomboid.jar (unsupported game version)");
                 byte[] orig = jf.getInputStream(e).readAllBytes();
-                patched.put(spec[0] + ".class", RBSAgent.patch(spec, orig));
-                hashes.add(spec[0] + ".class=" + RBSHook.sha256(orig));
-                System.out.println("patched  : " + spec[0] + "." + spec[1] + " (" + orig.length + " -> " + patched.get(spec[0] + ".class").length + " bytes)");
+                patched.put(cls + ".class", RBSAgent.patchClass(cls, orig));
+                hashes.add(cls + ".class=" + RBSHook.sha256(orig));
+                System.out.println("patched  : " + cls + " (" + orig.length + " -> " + patched.get(cls + ".class").length + " bytes)");
             }
         }
         verify(patched);

@@ -21,7 +21,8 @@ import java.util.Objects;
  * DeadBodyAtlas renders corpses from a copy of that visual, where no character id is available.
  * Weights come from ~/Zomboid/Lua/RealBodyShape_zombies.txt (written by the mod's Lua).
  * Missing limbs (RealBodyShapeLimbs mod) are handled by {@link Limbs} through two more hooks; the same skin
- * matrix hook lets {@link Fit} push a variant zombie's clothes out or in to match its body.
+ * matrix hook lets {@link Fit} push a variant zombie's clothes out or in to match its body, and {@link Clean}
+ * makes zombies load untouched copies of the clothes the main mod reshapes for the player.
  * Everything else, and every failure, falls through to the original methods.
  * Only public game members are used, through reflection, so nothing here depends on game internals.
  */
@@ -36,7 +37,7 @@ public final class RBSHook {
     private static Field fR, fG, fB, fFemaleModel, fMaleModel;
     private static Object scriptManager, modelManager;
     private static Class<?> zombieClass, visualClass, skinningDataClass;
-    private static Method origBody, origVisual, origSkin, origAnimated;
+    private static Method origBody, origVisual, origSkin, origAnimated, origAdditional, origClothing;
 
     private static volatile boolean enabled = true;
     private static volatile int[] weights = { 15, 55, 22, 8 };
@@ -94,6 +95,34 @@ public final class RBSHook {
             warn("animated model failed: " + e);
         }
         return p;
+    }
+
+    // ---------------- ModelManager.newAdditionalModelInstance(mesh, texture, chr, animPlayer, shader) ----------------
+    public static Object additionalModel(Object mgr, Object mesh, Object tex, Object chr, Object ap, Object shader) {
+        Object m = mesh;
+        try {
+            m = Clean.meshFor(mesh, chr);
+        } catch (Throwable t) {
+            warn("zombie clothes copy failed: " + t);
+        }
+        return call(origAdditional(mgr), mgr, m, tex, chr, ap, shader);
+    }
+
+    // ---------------- AnimatedModel.addClothingItem(itemVisual, clothingItem) ----------------
+    // corpses in DeadBodyAtlas build their clothes here with no character: tell Clean whose clothes they are
+    public static void animatedClothing(Object model, Object itemVisual, Object clothingItem) {
+        boolean zombie = false;
+        try {
+            zombie = Clean.isZombieModel(model);
+        } catch (Throwable t) {
+            warn("corpse clothes failed: " + t);
+        }
+        Boolean prev = Clean.enter(zombie);
+        try {
+            call(origClothing(model), model, itemVisual, clothingItem);
+        } finally {
+            Clean.exit(prev);
+        }
     }
 
     private static Object call(Method m, Object target, Object... args) {
@@ -156,6 +185,39 @@ public final class RBSHook {
                 throw new IllegalStateException("RBS hook: original AnimatedModel.getAnimationPlayer missing", e);
             }
             origAnimated = o;
+        }
+        return o;
+    }
+
+    private static Method origAdditional(Object mgr) {
+        Method o = origAdditional;
+        if (o == null) {
+            try {
+                ClassLoader cl = mgr.getClass().getClassLoader();
+                Class<?> igc = Class.forName("zombie.characters.IsoGameCharacter", false, cl);
+                Class<?> ap = Class.forName("zombie.core.skinnedmodel.animation.AnimationPlayer", false, cl);
+                o = mgr.getClass().getMethod(RBSAgent.RENAMED_ADDITIONAL, String.class, String.class, igc, ap, String.class);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("RBS hook: original newAdditionalModelInstance missing", e);
+            }
+            origAdditional = o;
+        }
+        return o;
+    }
+
+    private static Method origClothing(Object model) {
+        Method o = origClothing;
+        if (o == null) {
+            try {
+                ClassLoader cl = model.getClass().getClassLoader();
+                Class<?> iv = Class.forName("zombie.core.skinnedmodel.visual.ItemVisual", false, cl);
+                Class<?> ci = Class.forName("zombie.core.skinnedmodel.population.ClothingItem", false, cl);
+                o = model.getClass().getDeclaredMethod(RBSAgent.RENAMED_CLOTHING, iv, ci);   // the original is private
+                o.setAccessible(true);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("RBS hook: original AnimatedModel.addClothingItem missing", e);
+            }
+            origClothing = o;
         }
         return o;
     }

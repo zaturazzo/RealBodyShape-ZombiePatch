@@ -6,11 +6,14 @@ import java.security.ProtectionDomain;
 
 /**
  * RealBodyShape zombie patch (local use only, not a Workshop item).
- * Four game methods are redirected to RBSHook so zombies get their own bodies and (optionally) missing limbs:
+ * Six methods of four game classes are redirected to RBSHook so zombies get their own bodies, clothes that are not
+ * the player's reshaped ones, and (optionally) missing limbs:
  *   ModelManager.getBodyModel(IsoGameCharacter)   -> getBodyModel$rbs       + RBSHook.getBodyModel(mgr, chr)
+ *   ModelManager.newAdditionalModelInstance(...)   -> newAdditionalModelInstance$rbs + RBSHook.additionalModel(...)
  *   HumanVisual.getModel()                         -> getModel$rbs           + RBSHook.visualModel(visual)      (corpses)
  *   AnimationPlayer.getSkinTransforms(SkinningData)-> getSkinTransforms$rbs  + RBSHook.skinTransforms(player, data)
  *   AnimatedModel.getAnimationPlayer()             -> getAnimationPlayer$rbs + RBSHook.animatedPlayer(model)    (corpse atlas)
+ *   AnimatedModel.addClothingItem(...)             -> addClothingItem$rbs    + RBSHook.animatedClothing(...)    (corpse atlas)
  * Two ways to apply the same patch:
  *   1. classpath mode (default, used by zombie_patch.py / install.bat): rbs_patch.jar holds the pre-patched classes
  *      and is listed first in ProjectZomboid64.json "classpath", so it shadows the game's copies.
@@ -26,12 +29,23 @@ public final class RBSAgent {
     static final String RENAMED_VISUAL = "getModel$rbs";
     static final String RENAMED_SKIN = "getSkinTransforms$rbs";
     static final String RENAMED_ANIMATED = "getAnimationPlayer$rbs";
+    static final String RENAMED_ADDITIONAL = "newAdditionalModelInstance$rbs";
+    static final String RENAMED_CLOTHING = "addClothingItem$rbs";
+    static final String ADDITIONAL_DESC = "(Ljava/lang/String;Ljava/lang/String;Lzombie/characters/IsoGameCharacter;"
+            + "Lzombie/core/skinnedmodel/animation/AnimationPlayer;Ljava/lang/String;)Lzombie/core/skinnedmodel/model/ModelInstance;";
+    static final String CLOTHING_DESC = "(Lzombie/core/skinnedmodel/visual/ItemVisual;Lzombie/core/skinnedmodel/population/ClothingItem;)V";
 
-    /** {class (internal name), method, descriptor, renamed-to, hook method, hook descriptor, cast class of the result} */
+    /**
+     * {class (internal name), method, descriptor, renamed-to, hook method, hook descriptor, cast class of the result
+     * (null for void)}. A class can appear more than once: its specs are applied one after another.
+     */
     static final String[][] SPECS = {
         { "zombie/core/skinnedmodel/ModelManager", "getBodyModel",
           "(Lzombie/characters/IsoGameCharacter;)Lzombie/core/skinnedmodel/model/Model;", RENAMED_BODY,
           "getBodyModel", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", MODEL },
+        { "zombie/core/skinnedmodel/ModelManager", "newAdditionalModelInstance", ADDITIONAL_DESC, RENAMED_ADDITIONAL,
+          "additionalModel", "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+          "zombie/core/skinnedmodel/model/ModelInstance" },
         { "zombie/core/skinnedmodel/visual/HumanVisual", "getModel",
           "()Lzombie/core/skinnedmodel/model/Model;", RENAMED_VISUAL,
           "visualModel", "(Ljava/lang/Object;)Ljava/lang/Object;", MODEL },
@@ -41,6 +55,8 @@ public final class RBSAgent {
         { "zombie/core/skinnedmodel/advancedanimation/AnimatedModel", "getAnimationPlayer",
           "()Lzombie/core/skinnedmodel/animation/AnimationPlayer;", RENAMED_ANIMATED,
           "animatedPlayer", "(Ljava/lang/Object;)Ljava/lang/Object;", "zombie/core/skinnedmodel/animation/AnimationPlayer" },
+        { "zombie/core/skinnedmodel/advancedanimation/AnimatedModel", "addClothingItem", CLOTHING_DESC, RENAMED_CLOTHING,
+          "animatedClothing", "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", null },
     };
     static volatile boolean agentActive;
 
@@ -51,11 +67,10 @@ public final class RBSAgent {
         inst.addTransformer(new ClassFileTransformer() {
             @Override
             public byte[] transform(ClassLoader loader, String name, Class<?> redefined, ProtectionDomain pd, byte[] bytes) {
-                String[] spec = specFor(name);
-                if (spec == null) return null;
+                if (!targets().contains(name)) return null;
                 try {
-                    byte[] out = patch(spec, bytes);
-                    log("patched " + name + "." + spec[1] + " (" + bytes.length + " -> " + out.length + " bytes)");
+                    byte[] out = patchClass(name, bytes);
+                    log("patched " + name + " (" + bytes.length + " -> " + out.length + " bytes)");
                     return out;
                 } catch (Throwable t) {
                     log("patch of " + name + " failed, game keeps the vanilla behaviour: " + t);
@@ -66,13 +81,20 @@ public final class RBSAgent {
         });
     }
 
-    static String[] specFor(String internalName) {
-        for (String[] s : SPECS) if (s[0].equals(internalName)) return s;
-        return null;
+    /** the game classes the specs touch, in order of first appearance */
+    static java.util.List<String> targets() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String[] s : SPECS) if (!out.contains(s[0])) out.add(s[0]);
+        return out;
     }
 
-    static byte[] patch(String[] spec, byte[] bytes) throws java.io.IOException {
-        return ClassPatcher.patch(bytes, spec[1], spec[2], spec[3], HOOK_CLASS, spec[4], spec[5], spec[6]);
+    /** every spec of this class, applied one after another to the class bytes */
+    static byte[] patchClass(String internalName, byte[] bytes) throws java.io.IOException {
+        byte[] out = bytes;
+        for (String[] s : SPECS) {
+            if (s[0].equals(internalName)) out = ClassPatcher.patch(out, s[1], s[2], s[3], HOOK_CLASS, s[4], s[5], s[6]);
+        }
+        return out;
     }
 
     static void log(String s) {

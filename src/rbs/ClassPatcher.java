@@ -13,8 +13,10 @@ import java.util.List;
  * the old name whose body is
  *
  *     return (CastClass) HookClass.hookMethod(this, arg0, ...);     // every parameter must be a reference
+ *     HookClass.hookMethod(this, arg0, ...); return;                 // methods returning void (castClass null)
  *
  * The new body has no branches, so no StackMapTable is needed and the JVM verifier accepts it as-is.
+ * The added method is public; the renamed original keeps its own access flags.
  * Everything else (fields, other methods, attributes) is copied byte for byte.
  */
 public final class ClassPatcher {
@@ -63,7 +65,9 @@ public final class ClassPatcher {
     public static byte[] patch(byte[] cls, String methodName, String methodDesc, String renamedTo,
                                String hookClass, String hookMethod, String hookDesc, String castClass) throws IOException {
         int nparams = countRefParams(methodDesc);
-        if (nparams > 3) throw new IOException("too many parameters: " + methodDesc);
+        if (nparams > 250) throw new IOException("too many parameters: " + methodDesc);
+        boolean isVoid = methodDesc.endsWith(")V");
+        if (isVoid != (castClass == null)) throw new IOException("a void method takes no cast class (and only it): " + methodDesc);
         DataInputStream in = new DataInputStream(new ByteArrayInputStream(cls));
         int magic = in.readInt();
         if (magic != 0xCAFEBABE) throw new IOException("not a class file");
@@ -115,7 +119,7 @@ public final class ClassPatcher {
         int hookClassIdx = cp.ref(7, cp.utf8(hookClass));
         int natIdx = cp.ref(12, cp.utf8(hookMethod), cp.utf8(hookDesc));
         int hookRef = cp.ref(10, hookClassIdx, natIdx);
-        int castIdx = cp.ref(7, cp.utf8(castClass));
+        int castIdx = isVoid ? 0 : cp.ref(7, cp.utf8(castClass));
         int codeIdx = cp.utf8("Code");
         target.name = renamedIdx;
 
@@ -123,12 +127,19 @@ public final class ClassPatcher {
         added.access = 0x0001;                 // public
         added.name = cp.utf8(methodName);
         added.desc = cp.utf8(methodDesc);
-        byte[] code = new byte[(1 + nparams) + 3 + 3 + 1];
-        int k = 0;
-        for (int i = 0; i <= nparams; i++) code[k++] = (byte) (0x2A + i);          // aload_0 .. aload_n
-        code[k++] = (byte) 0xB8; code[k++] = (byte) (hookRef >> 8); code[k++] = (byte) hookRef;   // invokestatic hook
-        code[k++] = (byte) 0xC0; code[k++] = (byte) (castIdx >> 8); code[k++] = (byte) castIdx;   // checkcast CastClass
-        code[k++] = (byte) 0xB0;                                                    // areturn
+        ByteArrayOutputStream cb = new ByteArrayOutputStream();
+        for (int i = 0; i <= nparams; i++) {
+            if (i <= 3) cb.write(0x2A + i);                                          // aload_0 .. aload_3
+            else { cb.write(0x19); cb.write(i); }                                     // aload <i>
+        }
+        cb.write(0xB8); cb.write(hookRef >> 8); cb.write(hookRef);                    // invokestatic hook
+        if (isVoid) {
+            cb.write(0xB1);                                                           // return
+        } else {
+            cb.write(0xC0); cb.write(castIdx >> 8); cb.write(castIdx);                // checkcast CastClass
+            cb.write(0xB0);                                                           // areturn
+        }
+        byte[] code = cb.toByteArray();
         ByteArrayOutputStream ab = new ByteArrayOutputStream();
         DataOutputStream ad = new DataOutputStream(ab);
         ad.writeShort(1);                                   // attributes_count

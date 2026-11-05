@@ -14,11 +14,12 @@ public final class CpCheck {
             String cn = spec[0].replace('/', '.');
             Class<?> c = Class.forName(cn, false, CpCheck.class.getClassLoader());
             System.out.println(cn + " from: " + c.getProtectionDomain().getCodeSource().getLocation());
-            int found = 0;
+            boolean orig = false, renamed = false;      // by name: the game may have other overloads of the method
             for (Method m : c.getDeclaredMethods()) {
-                if (m.getName().equals(spec[1]) || m.getName().equals(spec[3])) { System.out.println("  " + m.getName()); found++; }
+                if (m.getName().equals(spec[1])) orig = true;
+                if (m.getName().equals(spec[3])) { System.out.println("  " + m.getName()); renamed = true; }
             }
-            if (found != 2) { System.out.println("  FAILED: game's own class is used"); bad++; }
+            if (!orig || !renamed) { System.out.println("  FAILED: game's own class is used"); bad++; }
         }
         System.out.println(bad == 0 ? "OK: patched classes are first on the classpath" : "FAILED");
         System.exit(bad == 0 ? 0 : 1);
