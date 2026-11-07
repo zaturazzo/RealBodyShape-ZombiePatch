@@ -51,11 +51,16 @@ final class Clean {
         return RBSHook.isZombieVisual(m.invoke(model));
     }
 
+    /** a live zombie, or (no character passed) the corpse of one whose clothes an AnimatedModel builds right now */
+    static boolean isZombieWearer(Object chr) throws Exception {
+        return chr != null ? RBSHook.isLiveZombie(chr) : Boolean.TRUE.equals(CORPSE.get());
+    }
+
     /** the mesh name to load for this character: the untouched copy for a zombie when there is one, else as given */
     static Object meshFor(Object mesh, Object chr) throws Exception {
         if (failed || !(mesh instanceof String)) return mesh;
         if (!RBSHook.zombiesEnabled()) return mesh;
-        boolean zombie = chr != null ? RBSHook.isLiveZombie(chr) : Boolean.TRUE.equals(CORPSE.get());
+        boolean zombie = isZombieWearer(chr);
         if (!zombie) return mesh;
         if (!ready) init();
         if (failed) return mesh;

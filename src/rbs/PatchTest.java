@@ -20,30 +20,17 @@ public final class PatchTest {
         Path outDir = Paths.get(a.length > 1 ? a[1] : ".");
         Files.createDirectories(outDir);
         final Map<String, byte[]> patched = new HashMap<>();
-        try (JarFile jf = new JarFile(jar.toFile())) {
-            for (String cls : RBSAgent.targets()) {
-                byte[] orig = jf.getInputStream(jf.getEntry(cls + ".class")).readAllBytes();
-                byte[] out = RBSAgent.patchClass(cls, orig);
-                String simple = cls.substring(cls.lastIndexOf('/') + 1);
-                Files.write(outDir.resolve(simple + ".patched.class"), out);
-                patched.put(cls.replace('/', '.'), out);
-                System.out.println("patched " + cls + ": " + orig.length + " -> " + out.length + " bytes");
-            }
+        JarFile jf = new JarFile(jar.toFile());
+        for (String cls : RBSAgent.targets()) {
+            byte[] orig = jf.getInputStream(jf.getEntry(cls + ".class")).readAllBytes();
+            byte[] out = RBSAgent.patchClass(cls, orig);
+            String simple = cls.substring(cls.lastIndexOf('/') + 1);
+            Files.write(outDir.resolve(simple + ".patched.class"), out);
+            patched.put(cls.replace('/', '.'), out);
+            System.out.println("patched " + cls + ": " + orig.length + " -> " + out.length + " bytes");
         }
-        ClassLoader child = new ClassLoader(PatchTest.class.getClassLoader()) {
-            @Override
-            protected Class<?> loadClass(String n, boolean resolve) throws ClassNotFoundException {
-                byte[] b = patched.get(n);
-                if (b != null) {
-                    synchronized (getClassLoadingLock(n)) {
-                        Class<?> c = findLoadedClass(n);
-                        if (c == null) c = defineClass(n, b, 0, b.length);
-                        return c;
-                    }
-                }
-                return super.loadClass(n, resolve);
-            }
-        };
+        // the whole game jar in one loader with the patched classes (see VerifyLoader)
+        ClassLoader child = new VerifyLoader(jf, patched, PatchTest.class.getClassLoader());
         int bad = 0;
         for (String[] spec : RBSAgent.SPECS) {
             String cn = spec[0].replace('/', '.');
@@ -69,6 +56,7 @@ public final class PatchTest {
                 bad++;
             }
         }
+        jf.close();
         System.out.println(bad == 0 ? "OK" : "FAILED (" + bad + ")");
         System.exit(bad == 0 ? 0 : 1);
     }

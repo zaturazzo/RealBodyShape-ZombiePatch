@@ -81,7 +81,7 @@ public final class MakePatch {
                 System.out.println("patched  : " + cls + " (" + orig.length + " -> " + patched.get(cls + ".class").length + " bytes)");
             }
         }
-        verify(patched);
+        verify(patched, gameJar);
         Files.createDirectories(installDir);
         try (ZipOutputStream z = new ZipOutputStream(Files.newOutputStream(jar))) {
             for (Map.Entry<String, byte[]> e : patched.entrySet()) put(z, e.getKey(), e.getValue());
@@ -94,25 +94,16 @@ public final class MakePatch {
         System.out.println("DONE. Start the game, enable the mods 'Real Body Shape' and 'Real Body Shape - Zombie Bodies' (+ 'Zombie Dismemberment' if you like), then check console.txt for '[RBS hook] ready'.");
     }
 
-    /** define the patched classes in a child loader and link them, so the JVM verifier checks the new bytecode */
-    static void verify(Map<String, byte[]> patched) {
+    /**
+     * define the patched classes, with the rest of the game jar, in one child loader and link them, so the JVM
+     * verifier checks the new bytecode (see VerifyLoader)
+     */
+    static void verify(Map<String, byte[]> patched, Path gameJar) throws IOException {
         final Map<String, byte[]> byName = new HashMap<>();
         for (Map.Entry<String, byte[]> e : patched.entrySet())
             byName.put(e.getKey().replace(".class", "").replace('/', '.'), e.getValue());
-        ClassLoader child = new ClassLoader(MakePatch.class.getClassLoader()) {
-            @Override
-            protected Class<?> loadClass(String n, boolean resolve) throws ClassNotFoundException {
-                byte[] b = byName.get(n);
-                if (b != null) {
-                    synchronized (getClassLoadingLock(n)) {
-                        Class<?> c = findLoadedClass(n);
-                        if (c == null) c = defineClass(n, b, 0, b.length);
-                        return c;
-                    }
-                }
-                return super.loadClass(n, resolve);
-            }
-        };
+        JarFile jf = new JarFile(gameJar.toFile());
+        ClassLoader child = new VerifyLoader(jf, byName, MakePatch.class.getClassLoader());
         for (String cn : byName.keySet()) {
             try {
                 Class<?> c = Class.forName(cn, false, child);
@@ -129,6 +120,7 @@ public final class MakePatch {
                 throw new IllegalStateException(e);
             }
         }
+        jf.close();
     }
 
     /** our own rbs/*.class files, taken from wherever this program runs from (jar or build directory) */
@@ -178,10 +170,19 @@ public final class MakePatch {
             Matcher m = Pattern.compile("\"classpath\"\\s*:\\s*\\[").matcher(cleaned);
             if (!m.find()) throw new IOException("\"classpath\" array not found in " + launcher);
             int at = m.end();
-            Matcher ind = Pattern.compile("\\r?\\n([ \\t]*)").matcher(cleaned);
-            String indent = ind.find(at) ? ind.group(1) : "        ";
-            String nl = cleaned.contains("\r\n") ? "\r\n" : "\n";
-            cleaned = cleaned.substring(0, at) + nl + indent + "\"" + jarRef(jar) + "\"," + cleaned.substring(at);
+            Matcher same = Pattern.compile("[ \\t]*(?=\")").matcher(cleaned);
+            same.region(at, cleaned.length());
+            if (same.lookingAt()) {
+                // the array on one line (ZombieBuddy's installer writes it so): [ "ours", ".", ... ]
+                at = same.end();
+                cleaned = cleaned.substring(0, at) + "\"" + jarRef(jar) + "\", " + cleaned.substring(at);
+            } else {
+                // one entry per line (the game's own file)
+                Matcher ind = Pattern.compile("\\r?\\n([ \\t]*)").matcher(cleaned);
+                String indent = ind.find(at) ? ind.group(1) : "        ";
+                String nl = cleaned.contains("\r\n") ? "\r\n" : "\n";
+                cleaned = cleaned.substring(0, at) + nl + indent + "\"" + jarRef(jar) + "\"," + cleaned.substring(at);
+            }
         }
         if (!cleaned.equals(text)) {
             Files.write(launcher, cleaned.getBytes(StandardCharsets.UTF_8));
@@ -192,10 +193,19 @@ public final class MakePatch {
         }
     }
 
-    /** drop our classpath line and any old -javaagent line, then repair a trailing comma before ']' */
+    /**
+     * drop our classpath entry and any old -javaagent entry, then repair a trailing comma before ']'. An entry on a
+     * line of its own goes with its line; one inside a one-line array (ZombieBuddy's installer rewrites the file that
+     * way, v6) goes with its comma.
+     */
     static String removeOurs(String text) {
-        String out = text.replaceAll("(?m)^[ \\t]*\"[^\"\\r\\n]*rbs_patch\\.jar\"\\s*,?[ \\t]*\\r?\\n", "");
-        out = out.replaceAll("(?m)^[ \\t]*\"-javaagent:[^\"\\r\\n]*rbs_agent\\.jar\"\\s*,?[ \\t]*\\r?\\n", "");
+        String out = text;
+        for (String ours : new String[]{"\"[^\"\\r\\n]*rbs_patch\\.jar\"", "\"-javaagent:[^\"\\r\\n]*rbs_agent\\.jar\""}) {
+            out = out.replaceAll("(?m)^[ \\t]*" + ours + "\\s*,?[ \\t]*\\r?\\n", "");
+            out = out.replaceAll(ours + "[ \\t]*,[ \\t]*", "");        // first or middle of a one-line array
+            out = out.replaceAll(",[ \\t]*" + ours, "");               // last of a one-line array
+            out = out.replaceAll(ours, "");                            // the only one
+        }
         out = out.replaceAll(",(\\s*)\\]", "$1]");
         return out;
     }

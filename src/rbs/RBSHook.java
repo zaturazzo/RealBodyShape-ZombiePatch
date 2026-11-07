@@ -10,8 +10,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
+import java.util.Collections;
 import java.util.Enumeration;
+import java.util.Map;
 import java.util.Objects;
+import java.util.WeakHashMap;
 
 /**
  * Targets of the patched game methods (see RBSAgent.SPECS).
@@ -22,7 +25,10 @@ import java.util.Objects;
  * Weights come from ~/Zomboid/Lua/RealBodyShape_zombies.txt (written by the mod's Lua).
  * Missing limbs (RealBodyShapeLimbs mod) are handled by {@link Limbs} through two more hooks; the same skin
  * matrix hook lets {@link Fit} push a variant zombie's clothes out or in to match its body, and {@link Clean}
- * makes zombies load untouched copies of the clothes the main mod reshapes for the player.
+ * makes zombies load untouched copies of the clothes the main mod reshapes for the player. {@link Height} makes
+ * each zombie a little taller or shorter through two more hooks on AnimationPlayer, and {@link Jiggle} lets fat
+ * zombies' and overweight players' bellies bounce (its own shader for their bodies and clothes, fed through the skin
+ * matrix palette).
  * Everything else, and every failure, falls through to the original methods.
  * Only public game members are used, through reflection, so nothing here depends on game internals.
  */
@@ -37,33 +43,89 @@ public final class RBSHook {
     private static Field fR, fG, fB, fFemaleModel, fMaleModel;
     private static Object scriptManager, modelManager;
     private static Class<?> zombieClass, visualClass, skinningDataClass;
-    private static Method origBody, origVisual, origSkin, origAnimated, origAdditional, origClothing;
+    private static Method origBody, origVisual, origSkin, origAnimated, origAdditional, origClothing, origUpdateSkin, origRootChild;
 
     private static volatile boolean enabled = true;
+    /** female zombies get variants too; 0 while Hotsco's New Body replaces the female body (it keeps its own) */
+    private static volatile boolean females = true;
     private static volatile int[] weights = { 15, 55, 22, 8 };
     private static long cfgMtime = -1, cfgNextCheck;
-    private static int logged;
+    private static int logged, keptLogged;
+    /**
+     * zombies (live: the character, corpses: the visual) whose body another mod chose (child zombies, special
+     * models...): they keep it, and the clothes fit / belly of a variant body are not applied to them
+     */
+    private static final Map<Object, Boolean> keptBody = Collections.synchronizedMap(new WeakHashMap<>());
 
     private RBSHook() {}
 
+    // ---------------- ZombieBuddy ----------------
+    // The same hooks also come as ZombieBuddy patches (package rbszb, built from these sources by zb_build.py: no
+    // launcher change of ours, the jar ships in the Workshop item). Its patches mark the JVM the first time one of them
+    // runs; from then on this classpath copy only passes calls through to the game, so one of the two works, never both.
+    // If ZombieBuddy is missing or its jar was not allowed, nothing is marked and this copy keeps working.
+    static final String ZB_FLAG = "rbs.zb";
+    private static final boolean CLASSPATH_COPY = "rbs".equals(RBSHook.class.getPackageName());
+    private static volatile boolean zbSeen, zbMarked;
+    private static long zbNext;
+
+    /** this classpath copy only: true once the ZombieBuddy build has taken over */
+    static boolean zbActive() {
+        if (zbSeen) return true;
+        if (!CLASSPATH_COPY) return false;
+        long now = System.nanoTime();
+        if (now < zbNext) return false;
+        zbNext = now + 500_000_000L;
+        if ("1".equals(System.getProperty(ZB_FLAG))) {
+            zbSeen = true;
+            log("the ZombieBuddy build of the patch is running - this classpath copy steps aside");
+        }
+        return zbSeen;
+    }
+
+    /** the ZombieBuddy copy: its patches call this, the classpath copy steps aside */
+    public static void zbMark() {
+        if (zbMarked) return;
+        zbMarked = true;
+        System.setProperty(ZB_FLAG, "1");
+        log("ZombieBuddy build: the first patched call ran");
+    }
+
     // ---------------- ModelManager.getBodyModel(chr) ----------------
+    // the game's answer first: only the shared vanilla body is swapped for a variant, a body another mod picked stays
     public static Object getBodyModel(Object mgr, Object chr) {
+        Object body = call(origBody(mgr), mgr, chr);
+        return zbActive() ? body : afterBodyModel(chr, body);
+    }
+
+    public static Object afterBodyModel(Object chr, Object body) {
         Object m = null;
         try {
-            m = zombieModel(chr);
+            m = zombieModel(chr, body);
         } catch (Throwable t) {
             warn("zombie body failed: " + t);
         }
-        if (m != null) return m;
-        return call(origBody(mgr), mgr, chr);
+        if (m != null) {
+            Jiggle.bodyModel(m);
+            return m;
+        }
+        Jiggle.playerBody(chr, body);
+        return body;
     }
 
     // ---------------- HumanVisual.getModel() ----------------
     public static Object visualModel(Object visual) {
         Object orig = call(origVisual(visual), visual);
+        return zbActive() ? orig : afterVisualModel(visual, orig);
+    }
+
+    public static Object afterVisualModel(Object visual, Object orig) {
         try {
             Object m = corpseModel(visual, orig);
-            if (m != null) return m;
+            if (m != null) {
+                Jiggle.bodyModel(m);
+                return m;
+            }
         } catch (Throwable t) {
             warn("corpse body failed: " + t);
         }
@@ -73,6 +135,10 @@ public final class RBSHook {
     // ---------------- AnimationPlayer.getSkinTransforms(data) ----------------
     public static Object skinTransforms(Object player, Object data) {
         Object t = call(origSkin(player), player, data);
+        return zbActive() ? t : afterSkinTransforms(player, data, t);
+    }
+
+    public static Object afterSkinTransforms(Object player, Object data, Object t) {
         try {
             Fit.apply(player, data, t);
         } catch (Throwable e) {
@@ -83,34 +149,107 @@ public final class RBSHook {
         } catch (Throwable e) {
             warn("limbs failed: " + e);
         }
-        return t;
+        return Jiggle.palette(player, data, t);
+    }
+
+    // ---------------- AnimationPlayer.UpdateSkinTransforms() ----------------
+    // called once a fresh pose is in the model-space bone matrices (both animation paths): zombie heights
+    public static void updateSkinTransforms(Object player) {
+        call(origUpdateSkin(player), player);
+        if (!zbActive()) afterUpdateSkinTransforms(player);
+    }
+
+    public static void afterUpdateSkinTransforms(Object player) {
+        try {
+            Height.apply(player);
+        } catch (Throwable e) {
+            warn("zombie height failed: " + e);
+        }
+        HeadLook.update(player);
+        Jiggle.update(player);
+    }
+
+    // ---------------- AnimationPlayer.transformRootChildBones(bone, rotation) ----------------
+    // a turn-around animation event rebuilds the model-space bone matrices: stretch them again
+    public static void rootChildBones(Object player, Object bone, Object rotation) {
+        call(origRootChild(player), player, bone, rotation);
+        if (!zbActive()) afterRootChildBones(player);
+    }
+
+    public static void afterRootChildBones(Object player) {
+        try {
+            Height.apply(player);
+        } catch (Throwable e) {
+            warn("zombie height (turn) failed: " + e);
+        }
+        HeadLook.reapply(player);
     }
 
     // ---------------- AnimatedModel.getAnimationPlayer() ----------------
     public static Object animatedPlayer(Object model) {
         Object p = call(origAnimated(model), model);
+        if (!zbActive()) afterAnimatedPlayer(model, p);
+        return p;
+    }
+
+    public static void afterAnimatedPlayer(Object model, Object p) {
         try {
             Limbs.remember(p, model);
         } catch (Throwable e) {
             warn("animated model failed: " + e);
         }
-        return p;
     }
 
     // ---------------- ModelManager.newAdditionalModelInstance(mesh, texture, chr, animPlayer, shader) ----------------
     public static Object additionalModel(Object mgr, Object mesh, Object tex, Object chr, Object ap, Object shader) {
-        Object m = mesh;
+        Object m = mesh, sh = shader;
+        if (!zbActive()) {
+            m = additionalMesh(mesh, chr);
+            sh = additionalShader(shader, m, chr);
+        }
+        return call(origAdditional(mgr), mgr, m, tex, chr, ap, sh);
+    }
+
+    /** the mesh a zombie's clothing piece loads: the untouched copy of what the main mod reshapes for the player */
+    public static Object additionalMesh(Object mesh, Object chr) {
         try {
-            m = Clean.meshFor(mesh, chr);
+            return Clean.meshFor(mesh, chr);
         } catch (Throwable t) {
             warn("zombie clothes copy failed: " + t);
+            return mesh;
         }
-        return call(origAdditional(mgr), mgr, m, tex, chr, ap, shader);
+    }
+
+    /** the shader of a clothing piece of a zombie with a variant body / a player: ours, so the clothes move along */
+    public static Object additionalShader(Object shader, Object mesh, Object chr) {
+        try {
+            boolean wearer = (zombiesEnabled() && Clean.isZombieWearer(chr)) || Jiggle.isPlayer(chr);
+            return Jiggle.clothingShader(shader, mesh, wearer);
+        } catch (Throwable t) {
+            warn("zombie clothes shader failed: " + t);
+            return shader;
+        }
     }
 
     // ---------------- AnimatedModel.addClothingItem(itemVisual, clothingItem) ----------------
     // corpses in DeadBodyAtlas build their clothes here with no character: tell Clean whose clothes they are
     public static void animatedClothing(Object model, Object itemVisual, Object clothingItem) {
+        if (zbActive()) {
+            call(origClothing(model), model, itemVisual, clothingItem);
+            return;
+        }
+        enterClothing(model);
+        try {
+            call(origClothing(model), model, itemVisual, clothingItem);
+        } finally {
+            exitClothing();
+        }
+    }
+
+    private static final Object NONE = new Object();
+    private static final ThreadLocal<java.util.ArrayDeque<Object>> CLOTHING_PREV = ThreadLocal.withInitial(java.util.ArrayDeque::new);
+
+    public static void enterClothing(Object model) {
         boolean zombie = false;
         try {
             zombie = Clean.isZombieModel(model);
@@ -118,11 +257,67 @@ public final class RBSHook {
             warn("corpse clothes failed: " + t);
         }
         Boolean prev = Clean.enter(zombie);
-        try {
-            call(origClothing(model), model, itemVisual, clothingItem);
-        } finally {
-            Clean.exit(prev);
+        CLOTHING_PREV.get().push(prev == null ? NONE : prev);
+    }
+
+    public static void exitClothing() {
+        Object prev = CLOTHING_PREV.get().poll();
+        Clean.exit(prev == null || prev == NONE ? null : (Boolean) prev);
+    }
+
+    // ---------------- SmartTexture.calculate() ----------------
+    // a player's texture: the finer face layer right after the skin (FaceLayer)
+    public static void smartCalculate(Object smart) {
+        if (!zbActive()) beforeSmartCalculate(smart);
+        call(origCalculate(smart), smart);
+    }
+
+    public static void beforeSmartCalculate(Object smart) {
+        FaceLayer.beforeCalculate(smart);
+    }
+
+    // ---------------- ModelInstanceTextureCreator.init(HumanVisual, ItemVisuals, ModelInstance) ----------------
+    // the face layer is loaded with the skin, and the texture waits for it like for its other layers
+    public static void textureCreatorInit(Object creator, Object visual, Object items, Object modelInstance) {
+        call(origCreatorInit(creator), creator, visual, items, modelInstance);
+        if (!zbActive()) afterTextureCreatorInit(creator);
+    }
+
+    public static void afterTextureCreatorInit(Object creator) {
+        FaceLayer.afterInit(creator);
+    }
+
+    private static Method origCalculate, origCreatorInit;
+
+    private static Method origCalculate(Object smart) {
+        Method o = origCalculate;
+        if (o == null) {
+            try {
+                Class<?> st = Class.forName("zombie.core.textures.SmartTexture", false, smart.getClass().getClassLoader());
+                o = st.getMethod(RBSAgent.RENAMED_CALCULATE);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("RBS hook: original SmartTexture.calculate missing", e);
+            }
+            origCalculate = o;
         }
+        return o;
+    }
+
+    private static Method origCreatorInit(Object creator) {
+        Method o = origCreatorInit;
+        if (o == null) {
+            try {
+                ClassLoader cl = creator.getClass().getClassLoader();
+                o = creator.getClass().getMethod(RBSAgent.RENAMED_CREATOR_INIT,
+                        Class.forName("zombie.core.skinnedmodel.visual.HumanVisual", false, cl),
+                        Class.forName("zombie.core.skinnedmodel.visual.ItemVisuals", false, cl),
+                        Class.forName("zombie.core.skinnedmodel.model.ModelInstance", false, cl));
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("RBS hook: original ModelInstanceTextureCreator.init missing", e);
+            }
+            origCreatorInit = o;
+        }
+        return o;
     }
 
     private static Object call(Method m, Object target, Object... args) {
@@ -176,6 +371,33 @@ public final class RBSHook {
         return o;
     }
 
+    private static Method origUpdateSkin(Object player) {
+        Method o = origUpdateSkin;
+        if (o == null) {
+            try {
+                o = player.getClass().getMethod(RBSAgent.RENAMED_UPDATE_SKIN);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("RBS hook: original AnimationPlayer.UpdateSkinTransforms missing", e);
+            }
+            origUpdateSkin = o;
+        }
+        return o;
+    }
+
+    private static Method origRootChild(Object player) {
+        Method o = origRootChild;
+        if (o == null) {
+            try {
+                Class<?> q = Class.forName("org.lwjgl.util.vector.Quaternion", false, player.getClass().getClassLoader());
+                o = player.getClass().getMethod(RBSAgent.RENAMED_ROOT_CHILD, String.class, q);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("RBS hook: original AnimationPlayer.transformRootChildBones missing", e);
+            }
+            origRootChild = o;
+        }
+        return o;
+    }
+
     private static Method origAnimated(Object model) {
         Method o = origAnimated;
         if (o == null) {
@@ -222,16 +444,43 @@ public final class RBSHook {
         return o;
     }
 
-    private static Object zombieModel(Object chr) throws Exception {
+    private static Object zombieModel(Object chr, Object orig) throws Exception {
         if (failed) return null;
         if (!ready) init();
         if (failed) return null;
         loadConfig();
         if (!enabled) return null;
         if (!isLiveZombie(chr)) return null;
+        if (!isSharedBody(orig)) {
+            kept(chr, orig);
+            return null;
+        }
         Object visual = chrVisual.invoke(chr);
         if (visual == null) return null;
-        return variantModel((Boolean) vIsFemale.invoke(visual), visualHash(visual));
+        boolean female = (Boolean) vIsFemale.invoke(visual);
+        if (female && !females) {
+            kept(chr, orig);
+            return null;
+        }
+        keptBody.remove(chr);
+        return variantModel(female, visualHash(visual));
+    }
+
+    /** the game's shared vanilla body (also what a body replacer's files load into), not a model another mod chose */
+    private static boolean isSharedBody(Object m) throws Exception {
+        return m != null && (m == fFemaleModel.get(modelManager) || m == fMaleModel.get(modelManager));
+    }
+
+    private static void kept(Object key, Object model) {
+        if (keptBody.put(key, Boolean.TRUE) == null && keptLogged < 8) {
+            keptLogged++;
+            log("zombie body: another mod chose " + model + " for a zombie - it keeps that body (no variant, no clothes fit, no belly)");
+        }
+    }
+
+    /** this zombie (character, or the visual of a corpse) draws a Zombie Bodies variant, not a body another mod chose */
+    static boolean wearsVariant(Object key) {
+        return key == null || !Boolean.TRUE.equals(keptBody.get(key));
     }
 
     private static Object corpseModel(Object visual, Object orig) throws Exception {
@@ -240,11 +489,20 @@ public final class RBSHook {
         if (failed) return null;
         loadConfig();
         if (!enabled || visual == null || !visualClass.isInstance(visual)) return null;
-        // only replace the shared body (forceModel / skeleton / animal results are returned by the original as-is)
-        if (orig == null || (orig != fFemaleModel.get(modelManager) && orig != fMaleModel.get(modelManager))) return null;
         if (!(Boolean) vIsZombie.invoke(visual)) return null;
         if ((Boolean) vIsSkeleton.invoke(visual)) return null;
-        return variantModel((Boolean) vIsFemale.invoke(visual), visualHash(visual));
+        // only replace the shared body (forceModel / skeleton / animal results are returned by the original as-is)
+        if (!isSharedBody(orig)) {
+            kept(visual, orig);
+            return null;
+        }
+        boolean female = (Boolean) vIsFemale.invoke(visual);
+        if (female && !females) {
+            kept(visual, orig);
+            return null;
+        }
+        keptBody.remove(visual);
+        return variantModel(female, visualHash(visual));
     }
 
     private static Object variantModel(boolean female, int hash) throws Exception {
@@ -279,6 +537,10 @@ public final class RBSHook {
 
     static Object visualOf(Object chr) throws Exception {
         return chrVisual.invoke(chr);
+    }
+
+    static boolean isHumanVisual(Object visual) {
+        return visual != null && visualClass != null && visualClass.isInstance(visual);
     }
 
     static boolean isZombieVisual(Object visual) throws Exception {
@@ -469,7 +731,7 @@ public final class RBSHook {
             if (mt == cfgMtime) return;
             cfgMtime = mt;
             int[] w = weights.clone();
-            boolean en = enabled;
+            boolean en = enabled, fe = true;
             for (String line : Files.readAllLines(p, StandardCharsets.UTF_8)) {
                 int eq = line.indexOf('=');
                 if (eq < 0) continue;
@@ -481,13 +743,16 @@ public final class RBSHook {
                         case "normal": w[1] = Integer.parseInt(v); break;
                         case "fat": w[2] = Integer.parseInt(v); break;
                         case "obese": w[3] = Integer.parseInt(v); break;
+                        case "female": fe = !(v.equals("0") || v.equalsIgnoreCase("false")); break;
                         default: break;
                     }
                 } catch (NumberFormatException ignored) {}
             }
             weights = w;
             enabled = en;
-            log("config: enabled=" + en + " thin/normal/fat/obese=" + w[0] + "/" + w[1] + "/" + w[2] + "/" + w[3]);
+            females = fe;
+            log("config: enabled=" + en + " thin/normal/fat/obese=" + w[0] + "/" + w[1] + "/" + w[2] + "/" + w[3]
+                    + (fe ? "" : ", female zombies keep the body the game loads"));
         } catch (Exception e) {
             warn("config: " + e);
         }

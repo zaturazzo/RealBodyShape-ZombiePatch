@@ -1,18 +1,33 @@
-# Real Body Shape – Zombie Bodies patch
+# Real Body Shape – patch (zombie bodies, head look, soft body physics)
 
 Unofficial companion for the Steam Workshop mod **[Real Body Shape](https://steamcommunity.com/sharedfiles/filedetails/?id=3830730496)**
 (Project Zomboid Build 42, Windows).
 
-With the mod alone, every zombie has the same body as your character (the engine shares one body mesh between the
-player and all zombies). With this patch, **each zombie and each corpse gets its own body: thin, normal, fat or
-obese**, fixed per zombie, while your character keeps following its real weight. Since v5 it can also hide
-**missing limbs** (hand, forearm, arm, leg) for the optional *Zombie Dismemberment* mod.
+The mod alone reshapes your character with its weight, diet and exercise. Some things cannot be done from Lua, and
+this patch adds them:
+
+- **Zombie bodies:** the engine shares one body mesh between the player and all zombies, so without the patch every
+  zombie copies your character's shape. With it, **each zombie and each corpse gets its own body (thin, normal, fat
+  or obese) and its own height**, and its clothes fit that body.
+- **Head look (v6):** your character turns their head toward the nearest zombie in sight, and zombies chasing you
+  look at you.
+- **Soft body physics (v6):** bellies, bust, buttocks and backpacks bounce as characters move, characters breathe,
+  bodies shake when hit.
+- **Missing limbs (v5):** hands, forearms, arms and legs really go missing for the optional *Zombie Dismemberment*
+  mod.
+
+> **Using ZombieBuddy?** You do not need this download. The Workshop item contains the same patch as a ZombieBuddy
+> Java mod: enable **Real Body Shape - zombie patch through ZombieBuddy** in the mod list and you are done
+> (ZombieBuddy asks once to allow its jar). With both installed, the ZombieBuddy one is used and this one steps aside.
 
 | | Mod only | Mod + patch |
 |---|---|---|
 | Player body follows weight, diet, exercise | yes | yes |
 | Vanilla 3D clothes, shoes, bags follow the body | yes | yes |
-| Zombies | copy the player's shape | own shape per zombie (4 variants) |
+| Women's floor-sitting poses | yes | yes, and skirts lie over the lap |
+| Head look | no | your character looks at zombies in sight; zombies chasing you look back |
+| Soft body physics | no | bellies, bust, buttocks, backpacks, breathing, hits |
+| Zombies | copy the player's shape | own shape (4 variants) and height per zombie |
 | Corpses | copy the player's shape | keep the zombie's own shape |
 | Dismembered zombies (optional mod) | blood + crawling only | limbs really missing, clothes included, on corpses too |
 
@@ -21,9 +36,11 @@ obese**, fixed per zombie, while your character keeps following its real weight.
 ## 1. Requirements
 
 - Windows, Steam version of Project Zomboid **Build 42** (developed on 42.21).
-- The **Real Body Shape** Workshop item, version **0.3.3 or newer**. It contains three mods: **Real Body Shape**,
-  **Real Body Shape - Zombie Bodies** (the zombie body variants) and **Real Body Shape - Zombie Dismemberment**
-  (optional: missing limbs). Enable the first two; the third if you want it.
+- The **Real Body Shape** Workshop item, version **0.3.4 or newer** (the physics needs the shader it ships). It
+  contains four mods: **Real Body Shape**, **Real Body Shape - Zombie Bodies** (zombie body variants and heights),
+  **Real Body Shape - Zombie Dismemberment** (optional: missing limbs) and **Real Body Shape - zombie patch through
+  ZombieBuddy** (only for ZombieBuddy users, see above). With this download, enable the first two, and the third if
+  you want it.
 - **No Java installation needed** – the patch uses the Java runtime that comes with the game (`jre64` folder).
 - Singleplayer. Not tested in multiplayer.
 
@@ -40,63 +57,87 @@ obese**, fixed per zombie, while your character keeps following its real weight.
    game     : D:\SteamLibrary\steamapps\common\ProjectZomboid
    patched  : zombie/core/skinnedmodel/ModelManager (66343 -> 67170 bytes)
    patched  : zombie/core/skinnedmodel/visual/HumanVisual (30333 -> 30567 bytes)
-   patched  : zombie/core/skinnedmodel/animation/AnimationPlayer (64133 -> 64444 bytes)
+   patched  : zombie/core/skinnedmodel/animation/AnimationPlayer (64133 -> 64870 bytes)
    patched  : zombie/core/skinnedmodel/advancedanimation/AnimatedModel (49592 -> 50163 bytes)
-   verified : zombie.core.skinnedmodel.ModelManager
-   verified : zombie.core.skinnedmodel.visual.HumanVisual
-   verified : zombie.core.skinnedmodel.animation.AnimationPlayer
-   verified : zombie.core.skinnedmodel.advancedanimation.AnimatedModel
-   written  : C:\Users\<you>\Zomboid\RealBodyShape\rbs_patch.jar (129 KB)
+   patched  : zombie/core/textures/SmartTexture (23142 -> 23282 bytes)
+   patched  : zombie/core/skinnedmodel/model/ModelInstanceTextureCreator (24056 -> 24383 bytes)
+   verified : ... (the same six classes)
+   written  : C:\Users\<you>\Zomboid\RealBodyShape\rbs_patch.jar (214 KB)
    launcher : C:/Users/<you>/Zomboid/RealBodyShape/rbs_patch.jar added first in "classpath" of D:\...\ProjectZomboid64.json
    backup   : D:\...\ProjectZomboid64.json.rbs_backup
-   DONE. Start the game with the Real Body Shape mod enabled and check console.txt for '[RBS hook] ready'.
+   DONE. Start the game, enable the mods 'Real Body Shape' and 'Real Body Shape - Zombie Bodies' (+ 'Zombie Dismemberment' if you like), then check console.txt for '[RBS hook] ready'.
    ```
    The script finds the game through Steam (registry + `libraryfolders.vdf`). If it prints
    `Project Zomboid folder not found`, run it with the folder as argument from a command prompt:
    ```
    install.bat "D:\SteamLibrary\steamapps\common\ProjectZomboid"
    ```
+   Updating from an older version: just run the new `install.bat`, it replaces the old entry.
 4. Start the game, in *Mods* enable *Real Body Shape* and *Real Body Shape - Zombie Bodies* (and
    *Real Body Shape - Zombie Dismemberment* if you want missing limbs), load your save.
-5. Walk around: zombies now come in different builds. Kill a fat one – the corpse stays fat.
+5. Walk around: zombies now come in different builds and heights, and your character looks at the ones in sight.
 
 ### What exactly was changed on your PC
-- `%USERPROFILE%\Zomboid\RealBodyShape\rbs_patch.jar` – created. It contains four game classes patched
+- `%USERPROFILE%\Zomboid\RealBodyShape\rbs_patch.jar` – created. It contains six game classes patched
   **on your machine from your own `projectzomboid.jar`** plus the small hook (`rbs/*.class`). Nothing of the
   game is included in the download itself.
-- `<game>\ProjectZomboid64.json` – one line added as the first entry of `"classpath"`. The original file is kept as
+- `<game>\ProjectZomboid64.json` – one entry added first in `"classpath"`. The original file is kept as
   `ProjectZomboid64.json.rbs_backup`. Nothing else in the game folder is touched.
 
 ## 3. Check that it is active
 
 Open `%USERPROFILE%\Zomboid\console.txt` after loading a save and look for:
 ```
-[RBS hook] ready (classpath) v5 - zombies and corpses use RBS_Zombie*_{Thin,Normal,Fat,Obese} model scripts; game classes match the patch source
+[RBS hook] ready (classpath) v6 - zombies and corpses use RBS_Zombie*_{Thin,Normal,Fat,Obese} model scripts; game classes match the patch source
 [RBS hook] config: enabled=true thin/normal/fat/obese=15/55/22/8
+[RBS hook] jiggle config: enabled=true strength=50% players=true (from 82 kg) bust=60% bags=100% limbs=100% breathing=100% hits=100% buttocks=100% underwear only x1.30
+[RBS hook] height config: enabled=true spread=+/-15.0%
+[RBS hook] head look config: enabled=true range=8 tiles, zombies=true
 [RBS hook] limbs config: enabled=true hand/forearm/arm/legs/one-leg=2.0/1.0/1.5/0.8/1.2 %
-[RealBodyShape] zombie bodies: patch active, Zombie Bodies mod on, config enabled
+[RealBodyShape] zombie bodies: patch active (classpath), Zombie Bodies mod on, config enabled, heights +/-15%, soft bellies 50%, players from 82 kg
 [RealBodyShape] dismembered zombies: mod on
 ```
-(the `limbs` lines only appear with the *Zombie Dismemberment* mod enabled.)
+(the `limbs` lines only appear with the *Zombie Dismemberment* mod enabled. With the ZombieBuddy mod instead, the
+lines say `zombiebuddy` instead of `classpath`; with both, `this classpath copy steps aside` follows.)
 `status.bat` shows the same information without starting the game (launcher entry, jar, whether the patch still
 matches the installed game version, mod found).
 
-## 4. Configure the zombie mix
+## 4. Settings
 
-The default mix is **15 % thin, 55 % normal, 22 % fat, 8 % obese**. It is set in the Real Body Shape mod, file
-`RealBodyShape.lua`, table:
-```lua
-RealBodyShape.ZOMBIES = { enabled = true, thin = 15, normal = 55, fat = 22, obese = 8 }
-```
-The numbers are relative weights (they do not have to add up to 100). `enabled = false` switches zombie bodies
-off without uninstalling the patch. The mod writes these values to `%USERPROFILE%\Zomboid\Lua\RealBodyShape_zombies.txt`
-every time a save is loaded and the patch re-reads that file within a few seconds, so changes apply without
-restarting the game. For a Workshop-installed mod the file is at
+Everything is set in the Real Body Shape mod, file `RealBodyShape.lua`. For a Workshop-installed mod it is at
 `<Steam>\steamapps\workshop\content\108600\3830730496\mods\RealBodyShape\42\media\lua\client\RealBodyShape.lua`
-(Workshop updates overwrite it, so keep a note of your values).
+(Workshop updates overwrite it, so keep a note of your values). The mod writes the values to
+`%USERPROFILE%\Zomboid\Lua\RealBodyShape_*.txt` every time a save is loaded and the patch re-reads those files within
+a few seconds, so changes apply without restarting the game.
 
-Each zombie's variant is derived from how it looks (skin, body hair, hair, beard, hair colour - the things the game
-saves with a corpse), which is why a corpse keeps the body its zombie had, also after reloading the save.
+```lua
+-- zombie mix: relative weights (they do not have to add up to 100); enabled = false switches zombie bodies off
+RealBodyShape.ZOMBIES = { enabled = true, thin = 15, normal = 55, fat = 22, obese = 8 }
+-- zombie heights: spread = percent taller / shorter at the extremes (bell-shaped: most stay within a third of it)
+RealBodyShape.HEIGHT = { enabled = true, spread = 15 }
+-- soft body physics, in percent (0 = that part off): strength = bellies of fat zombies and of players over
+-- player_from kg; limbs = buttocks / thighs / upper arms with the belly; bust; bags on the back; breathing (players);
+-- hits = a shake when hit or falling; butt = women players' buttocks (bounce at any weight);
+-- underwear = bust / buttocks with only underwear (or nothing) on them (130 = x1.3)
+RealBodyShape.JIGGLE = { enabled = true, strength = 50, players = true, player_from = 82,
+                         limbs = 100, bust = 60, bags = 100, breathing = 100, hits = 100, butt = 100, underwear = 130 }
+-- head look: range in tiles; zombies = zombies chasing you look at you
+RealBodyShape.LOOK = { enabled = true, range = 8, zombies = true }
+```
+
+Each zombie's variant and height are derived from how it looks (skin, body hair, hair, beard, hair colour - the
+things the game saves with a corpse), which is why a corpse keeps the body its zombie had, also after reloading the
+save.
+
+### Head look
+- Only zombies you can see on screen count: no hints about zombies behind walls, and zombies playing dead or
+  sitting against a wall are never looked at (that would give them away).
+- Looks down at crawlers. While aiming a gun your character watches the zombie in the line of fire, with a melee
+  weapon raised a wider arc, and still glances at a zombie close beside them. Hair, hats and glasses turn with the
+  head.
+- The head is left to the game in vehicles, asleep, climbing, lying down and when the game turns it itself.
+- Looks only: what your character can see in the game does not change.
+- Zombies that are chasing you turn their heads to you; the ones that have not noticed you don't.
 
 ## 4b. Dismembered zombies (optional, patch v5 or newer)
 
@@ -141,20 +182,22 @@ restore `ProjectZomboid64.json.rbs_backup` by hand.
 | `class ... not found in projectzomboid.jar` | Same: the game changed; wait for a patch update. |
 | Game does not start after install | Run `uninstall.bat` (or restore the `.rbs_backup`). Then post `console.txt`. |
 | No `[RBS hook]` lines in `console.txt` | The game was started before `install.bat` finished, or the launcher was reset by a game update. Run `status.bat`, then `install.bat`. |
-| `[RBS hook] WARNING model script RBS_Zombie... not found` | The mod *Real Body Shape - Zombie Bodies* is not enabled (it is part of the Real Body Shape Workshop item, v0.3.1+). |
+| `uninstall.bat` of v5 said `nothing to change` | ZombieBuddy's installer rewrites `ProjectZomboid64.json` with the classpath on one line, which v5 could not edit. Use the `uninstall.bat` of v6. |
+| `[RBS hook] jiggle: shader RBSJiggle not found` | The Real Body Shape mod is older than 0.3.4. Update it (Workshop). |
+| `[RBS hook] WARNING model script RBS_Zombie... not found` | The mod *Real Body Shape - Zombie Bodies* is not enabled. |
 | `[RBS hook] WARNING the game's classes changed ... STALE` | Game updated while the old jar stayed in the launcher (rare). Run `install.bat`. |
-| Zombies still look like the player | Check the three console lines in section 3; corpses created before the patch keep their old look until redrawn. |
+| Zombies still look like the player | Check the console lines in section 3; corpses created before the patch keep their old look until redrawn. |
 | Skeleton zombies unchanged | Intended – skeletons use their own mesh. |
 
 ## 8. How it works (technical)
 
 - The engine picks the shared mesh in two places: `ModelManager.getBodyModel(IsoGameCharacter)` for living
   characters and `HumanVisual.getModel()` for corpses drawn by `DeadBodyAtlas`. Neither can be changed from Lua.
-- `install.bat` runs `rbs.MakePatch` on the game's `jre64`. It reads those two classes from **your**
-  `projectzomboid.jar`, renames each method to `…$rbs` and adds a new method with the original name whose only
-  body is `return (Model) rbs.RBSHook.xxx(this, …)`. The new body has no branches, so no StackMapTable is needed
-  and the JVM verifier accepts it; the installer defines the patched classes in a throw-away class loader to prove it
-  before writing anything.
+- `install.bat` runs `rbs.MakePatch` on the game's `jre64`. It reads the target classes from **your**
+  `projectzomboid.jar`, renames each target method to `…$rbs` and adds a new method with the original name whose
+  only body is a call to `rbs.RBSHook` (which calls the original). The new body has no branches, so no StackMapTable
+  is needed and the JVM verifier accepts it; the installer defines the patched classes in a throw-away class loader
+  to prove it before writing anything.
 - `rbs_patch.jar` (patched classes + hook) is listed **first** in the launcher's classpath, so the JVM loads these
   copies instead of the game's – nothing in the game folder is modified.
 - `RBSHook` uses only public game methods through reflection. For a zombie it asks the script manager for
@@ -180,10 +223,32 @@ restore `ProjectZomboid64.json.rbs_backup` by hand.
   too, to tell `Clean` the clothes belong to a zombie. On top of the copies, `rbs.Fit` multiplies a per-bone
   bind-space map (Normal body -> the zombie's variant) into the skin matrices of every non-body mesh, so the
   clothes follow thin / fat / obese bodies.
+- **Heights (v6):** `rbs.Height` works on the model-space bone matrices right after
+  `AnimationPlayer.UpdateSkinTransforms()` (and `transformRootChildBones`, which rebuilds them on a turn-around).
+  Not a scale of the whole model: the legs, trunk, neck and arms get longer or shorter, the head, hands and feet keep
+  their size, and the body moves so the feet stay on the ground. Only joint positions change, so clothes, held
+  items, corpses and the game's hit points follow, and nothing builds up from frame to frame.
+- **Head look (v6):** `rbs.HeadLook` turns the neck (35 %) and head (65 %) in model space at the same point, smoothed
+  and speed-limited. It picks the nearest zombie the player is shown on screen; it never changes what the game
+  thinks the character sees.
+- **Soft body physics (v6):** `rbs.Jiggle` runs a small spring per character (belly, bust, buttocks, bag, breathing,
+  hit shake) and writes the offsets into the two last slots of the matrix palette (58 and 59, unused by the game's
+  skeletons). The body and clothes are drawn with the shader `RBSJiggle` that Real Body Shape 0.3.4+ ships (the
+  game's `basicEffect` plus those offsets), which moves each vertex by its bind-pose position, so the body and every
+  clothing piece on it move together.
+- **Face layer (prepared, v6):** `SmartTexture.calculate()` and `ModelInstanceTextureCreator.init(...)` are hooked so a
+  later version of the mod can add a finer face layer to player skins. Without the layer files nothing happens.
+- **ZombieBuddy build:** the same runtime classes, renamed to the package `rbszb` and loaded by ZombieBuddy with
+  Byte Buddy advice on the same ten methods (`zb/`). The classpath copy checks whether that build is running and then
+  only passes calls through, so the two never apply twice.
 
 ## 9. FAQ
 
+**ZombieBuddy?** Use the ZombieBuddy mod of the Workshop item instead of this download (see the top of this page).
+Both together are fine: the ZombieBuddy one is used.
+
 **Multiplayer?** Untested. The patch is client-side; a server would still think every zombie has the normal body.
+The head look is shown for your own character only.
 
 **Linux / macOS?** The launcher scripts differ (`projectzomboid.sh`). The Java part would work; the installer is
 Windows-only for now.
@@ -202,9 +267,10 @@ build.bat            -> dist\rbs_agent.jar  and  RealBodyShapeZombiesPatch-vN.zi
 ```
 Sources: `src/rbs/` – `ClassPatcher` (class-file rewriter), `RBSAgent` (patch specs, also usable as `-javaagent`
 with a plain `java.exe`), `RBSHook` (runtime logic), `Limbs` (missing limbs, v5), `Fit` / `FitTable` / `Clean`
-(zombie clothes, v5), `MakePatch` (installer), `Marker`, `PatchTest` / `CpCheck`
-(offline checks). The GitHub Actions workflow builds the same zip on every push so the released jar can be
-reproduced from source.
+(zombie clothes, v5), `Height`, `HeadLook`, `Jiggle`, `FaceLayer` (v6), `MakePatch` (installer), `Marker`,
+`PatchTest` / `CpCheck` / `VerifyLoader` (offline checks). `zb/` – the ZombieBuddy patches (`rbszb/Patches.java`)
+and their offline check; that jar is built against the game and ZombieBuddy jars and ships in the Workshop item.
+The GitHub Actions workflow builds the same zip on every push so the released jar can be reproduced from source.
 
 ## 11. License
 
@@ -216,29 +282,35 @@ MIT – see `LICENSE`. Project Zomboid is a trademark of The Indie Stone; this p
 
 ## มันทำอะไร
 ปกติเกมใช้โมเดลร่างกาย "ตัวเดียว" ร่วมกันทั้งผู้เล่นและซอมบี้ทุกตัว mod Real Body Shape จึงทำให้ซอมบี้อ้วน/ผอมตามผู้เล่น
-แพตช์นี้แก้จุดนั้น: ซอมบี้แต่ละตัว (และศพของมัน) ได้ร่างของตัวเอง ผอม / ปกติ / อ้วน / อ้วนมาก คงที่ต่อตัว ส่วนผู้เล่นยังเปลี่ยนตามน้ำหนักจริงเหมือนเดิม
-ตั้งแต่ v5 ยังซ่อนแขน/ขาที่ขาดให้ mod ตัวเลือก Zombie Dismemberment ด้วย
+แพตช์นี้แก้จุดนั้น: ซอมบี้แต่ละตัว (และศพของมัน) ได้ร่างของตัวเอง ผอม / ปกติ / อ้วน / อ้วนมาก และส่วนสูงของตัวเอง คงที่ต่อตัว ส่วนผู้เล่นยังเปลี่ยนตามน้ำหนักจริงเหมือนเดิม
+- v6: ตัวละครหันหัวมองซอมบี้ที่มองเห็น ซอมบี้ที่ไล่เราหันมามอง (แค่ภาพ ไม่เปลี่ยนการมองเห็นในเกม)
+- v6: ส่วนนิ่มกระเพื่อม ท้อง หน้าอก ก้น กระเป๋าหลัง การหายใจ การสั่นตอนโดนตี และกระโปรงคลุมตักตอนนั่ง
+- v5: ซ่อนแขน/ขาที่ขาดให้ mod ตัวเลือก Zombie Dismemberment
+
+**ใช้ ZombieBuddy อยู่แล้ว?** ไม่ต้องโหลดตัวนี้ ใน Workshop item มี **Real Body Shape - zombie patch through ZombieBuddy** เปิดใน mod list ได้เลย ถ้าลงทั้งสองแบบ จะใช้ตัว ZombieBuddy
 
 ## ต้องมีอะไร
 - Windows + Project Zomboid Build 42 (Steam)
-- Workshop item **Real Body Shape** 0.3.3 ขึ้นไป ซึ่งมี mod 3 ตัว: Real Body Shape, **Real Body Shape - Zombie Bodies** (ต้องเปิดทั้งคู่)
-  และ **Real Body Shape - Zombie Dismemberment** (ตัวเลือก: แขน/ขาขาด)
+- Workshop item **Real Body Shape 0.3.4** ขึ้นไป เปิด Real Body Shape กับ **Real Body Shape - Zombie Bodies**
+  และ **Real Body Shape - Zombie Dismemberment** ถ้าต้องการแขน/ขาขาด
 - **ไม่ต้องลง Java** ใช้ Java ที่มากับเกม (`jre64`)
 
 ## ติดตั้ง
 1. ดาวน์โหลด zip จากหน้า Releases แตกไว้ที่ไหนก็ได้
 2. **ปิดเกม**
-3. ดับเบิลคลิก `install.bat` → หน้าต่างดำจะพิมพ์ `patched` 4 บรรทัด, `verified` 4 บรรทัด, `written`, `launcher`, `DONE`
+3. ดับเบิลคลิก `install.bat` → หน้าต่างดำจะพิมพ์ `patched` 6 บรรทัด, `verified` 6 บรรทัด, `written`, `launcher`, `DONE`
    ถ้าขึ้น `Project Zomboid folder not found` ให้เปิด cmd แล้วรัน `install.bat "D:\...\steamapps\common\ProjectZomboid"`
+   อัปเดตจากเวอร์ชันเก่า: รัน `install.bat` ตัวใหม่ได้เลย มันแทนของเดิมให้
 4. เปิดเกม → Mods → เปิดทั้ง Real Body Shape และ Real Body Shape - Zombie Bodies (จะเปิด Zombie Dismemberment ด้วยก็ได้) → โหลดเซฟ
-5. เช็คใน `%USERPROFILE%\Zomboid\console.txt` ต้องมี `[RBS hook] ready (classpath) ...` และ `[RealBodyShape] zombie bodies: patch active`
+5. เช็คใน `%USERPROFILE%\Zomboid\console.txt` ต้องมี `[RBS hook] ready (classpath) v6 ...` และ `[RealBodyShape] zombie bodies: patch active`
 
 สิ่งที่ถูกแก้ในเครื่อง: สร้าง `%USERPROFILE%\Zomboid\RealBodyShape\rbs_patch.jar` (สร้างจาก `projectzomboid.jar` ของคุณเอง)
-และเติม 1 บรรทัดหน้า `"classpath"` ใน `ProjectZomboid64.json` ของเกม (สำรองไฟล์เดิมเป็น `.rbs_backup`) ไม่แตะไฟล์อื่นของเกมเลย
+และเติม 1 รายการหน้า `"classpath"` ใน `ProjectZomboid64.json` ของเกม (สำรองไฟล์เดิมเป็น `.rbs_backup`) ไม่แตะไฟล์อื่นของเกมเลย
 
-## ปรับสัดส่วนซอมบี้
-ค่าเริ่มต้น ผอม 15 / ปกติ 55 / อ้วน 22 / อ้วนมาก 8 แก้ได้ที่ `RealBodyShape.ZOMBIES` ใน `RealBodyShape.lua` ของ mod
-(`enabled = false` = ปิดเฉพาะส่วนซอมบี้โดยไม่ต้องถอดแพตช์) ค่าใหม่มีผลภายในไม่กี่วินาทีหลังโหลดเซฟ ไม่ต้องเปิดเกมใหม่
+## ตั้งค่า
+ทุกค่าอยู่ใน `RealBodyShape.lua` ของ mod: `RealBodyShape.ZOMBIES` (สัดส่วนซอมบี้ ผอม 15 / ปกติ 55 / อ้วน 22 / อ้วนมาก 8),
+`RealBodyShape.HEIGHT` (ส่วนสูง ±15%), `RealBodyShape.JIGGLE` (การกระเพื่อม เป็น %), `RealBodyShape.LOOK` (การหันหัว)
+(`enabled = false` = ปิดส่วนนั้นโดยไม่ต้องถอดแพตช์) ค่าใหม่มีผลภายในไม่กี่วินาทีหลังโหลดเซฟ ไม่ต้องเปิดเกมใหม่
 
 ## ซอมบี้แขน/ขาขาด (ตัวเลือก, แพตช์ v5 ขึ้นไป)
 เปิด mod ตัวที่ 3 ใน item: **Real Body Shape - Zombie Dismemberment** ซอมบี้ส่วนน้อย (รวมราว 6.5%) จะมือขาด / ขาดจากข้อศอก / แขนขาดทั้งท่อน /
@@ -251,9 +323,11 @@ Steam จะเขียน `ProjectZomboid64.json` ทับ แพตช์ห
 
 ## ถอด
 ปิดเกม → `uninstall.bat` (หรือเอาไฟล์ `.rbs_backup` มาแทน json) เกมกลับเป็นปกติ
+ถ้าเคยใช้ `uninstall.bat` ของ v5 แล้วขึ้น `nothing to change` (installer ของ ZombieBuddy เขียน json ใหม่เป็นบรรทัดเดียว) ให้ใช้ตัวของ v6
 
 ## ปัญหาที่พบบ่อย
 - เกมเปิดไม่ขึ้นหลังติดตั้ง → `uninstall.bat` แล้วส่ง `console.txt` มาแจ้ง
+- `jiggle: shader RBSJiggle not found` → mod Real Body Shape เก่ากว่า 0.3.4 ให้อัปเดต
 - `WARNING model script RBS_Zombie... not found` → ยังไม่ได้เปิด mod Real Body Shape - Zombie Bodies
 - ไม่มีบรรทัด `[RBS hook]` เลย → เกมเปิดก่อน install เสร็จ หรือเกมเพิ่งอัปเดต → รัน `status.bat` แล้ว `install.bat`
 - ซอมบี้โครงกระดูกไม่เปลี่ยน → ตั้งใจ มันใช้โมเดลของตัวเองอยู่แล้ว

@@ -94,12 +94,12 @@ final class Fit {
             Object[] e = byChar.get(chr);
             if (e != null && now < (Long) e[2]) return e[0] == NONE ? null : e;
             Object[] r = null;
-            if (RBSHook.isLiveZombie(chr)) r = describe(RBSHook.visualOf(chr));
+            if (RBSHook.isLiveZombie(chr) && RBSHook.wearsVariant(chr)) r = describe(RBSHook.visualOf(chr));
             byChar.put(chr, r == null ? new Object[]{ NONE, 0, now + 2_000_000_000L } : new Object[]{ r[0], r[1], now + 2_000_000_000L });
             return r;
         }
         Object visual = Limbs.animatedVisual(player);
-        if (visual == null || !RBSHook.isZombieVisual(visual)) return null;
+        if (visual == null || !RBSHook.isZombieVisual(visual) || !RBSHook.wearsVariant(visual)) return null;
         return describe(visual);
     }
 
