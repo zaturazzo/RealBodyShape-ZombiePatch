@@ -3,7 +3,8 @@
 Unofficial companion for the Steam Workshop item **Real Body Shape** (id 3830730496, version 0.3.4 or newer), which
 contains four mods: *Real Body Shape*, *Real Body Shape - Zombie Bodies*, *Real Body Shape - Zombie Dismemberment*
 and *Real Body Shape - zombie patch through ZombieBuddy*.
-- Head look: your character turns their head toward the nearest zombie in sight; zombies chasing you look at you.
+- Head look: your character turns their head toward the nearest zombie in sight; zombies chasing you look at you;
+  left standing still for two minutes, your character looks up at the camera.
 - Soft body physics: bellies, bust, buttocks and backpacks bounce, characters breathe, bodies shake when hit; skirts
   lie over the lap when sitting.
 - Zombie Bodies: zombies and their corpses get their own body shapes (thin / normal / fat / obese) and heights,

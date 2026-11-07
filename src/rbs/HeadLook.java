@@ -34,7 +34,10 @@ import java.util.WeakHashMap;
  * as their target (an idle zombie's head never tells the player who has noticed them), never one faking death or
  * sitting against a wall, nor one knocked down, hit, climbing; at most Z_MAX_YAW to the side. A crawler, lying flat,
  * turns about the vertical and lifts its face.
- * Config: ~/Zomboid/Lua/RealBodyShape_look.txt (enabled=1, range=<tiles>, zombies=1).
+ * Standing still for a while (idle seconds: not moving, not turning, not aiming, no action, not sitting) with no
+ * zombie to look at, the player looks up at the camera (user, 2026-11-07); any move hands the head back. The camera
+ * of the isometric view looks from the south-east, 30 degrees down: a character facing away from it does not turn.
+ * Config: ~/Zomboid/Lua/RealBodyShape_look.txt (enabled=1, range=<tiles>, zombies=1, idle=<seconds, 0 = off>).
  */
 final class HeadLook {
     static final String CONFIG = "RealBodyShape_look.txt";
@@ -59,9 +62,14 @@ final class HeadLook {
     static final float EYE = 1.6f, EYE_LOW = 1.2f, FACE = 1.55f, CRAWLER = 0.25f;
     /** world left of the facing (fy, -fx) for x east / y south; flip here if the head turns away */
     static final float YAW_SIGN = 1f;
+    /** where the camera is from a character: south-east on the ground (x east, y south), CAM_PITCH up (the 2:1
+     *  isometric view looks 30 degrees down); the head turns to it slower than to a zombie (TAU_IDLE) */
+    static final float CAM_X = 0.70710677f, CAM_Y = 0.70710677f, CAM_PITCH = (float) Math.toRadians(30), TAU_IDLE = 0.6f;
+    /** standing still: moved less than this (tiles) and turned less than this (cos) since the clock started */
+    static final float STILL_MOVE = 0.05f, STILL_TURN = (float) Math.cos(Math.toRadians(3));
 
     private static volatile boolean enabled = true, zombiesOn = true, failed, ready;
-    private static volatile float range = 8f;
+    private static volatile float range = 8f, idleSec = 0f;
     private static long cfgMtime = -1, cfgNextCheck;
 
     private static Method apCharacter, apSkinning, apCount, apModelAt, sdNumBones, sdBoneAt, sdParent;
@@ -71,6 +79,7 @@ final class HeadLook {
     private static Method isLocal, playerNum, chrX, chrY, chrZ, chrForward, v2X, v2Y, getCell, zombieList, targetAlpha;
     private static Method inVehicle, asleep, climbing, onFloor, dead, headLookAround, aiming, sneaking;
     private static Method zCrawling, zFakeDead, zSitWall, primaryItem, isRanged, zTarget, knockedDown, hitReaction;
+    private static Method sitGround, sitFurniture, timedActions, performing;     // optional: null = not there
     private static Class<?> weaponClass;
 
     private static final Map<Object, Skel> skels = Collections.synchronizedMap(new WeakHashMap<>());
@@ -93,6 +102,10 @@ final class HeadLook {
         long t;
         String why = "";              // what it looks at, for the log
         boolean zombie;
+        // standing still: where and which way the player stood when the clock started
+        float rx, ry, rfx, rfy;
+        long stillSince;
+        boolean hasRef, idle;
     }
 
     // ---------------- hook ----------------
@@ -122,9 +135,12 @@ final class HeadLook {
             s.t = now;
             float[] want = { 0f, 0f };
             boolean free = free(chr);
-            if (free) target(chr, want, s, (Boolean) aiming.invoke(chr) ? (gun(chr) ? AIM_CONE : MELEE_CONE) : BEHIND);
+            boolean aim = free && (Boolean) aiming.invoke(chr);
+            boolean sees = false;
+            if (free) sees = target(chr, want, s, aim ? (gun(chr) ? AIM_CONE : MELEE_CONE) : BEHIND);
             else s.why = "busy";
-            float tau = (want[0] != 0f || want[1] != 0f) ? TAU_TO : TAU_BACK;
+            s.idle = idleLook(chr, s, now, want, !free || aim || sees);
+            float tau = s.idle ? TAU_IDLE : (want[0] != 0f || want[1] != 0f) ? TAU_TO : TAU_BACK;
             s.yaw = approach(s.yaw, want[0], dt, tau);
             s.pitch = approach(s.pitch, want[1], dt, tau);
             if (!free) {                                        // the game or the pose has the head: hand it back at once
@@ -222,16 +238,57 @@ final class HeadLook {
 
     // ---------------- what to look at ----------------
 
+    /** standing still long enough with nothing else to look at: {yaw, pitch} towards the camera; true while it does.
+     *  'reset' (busy, aiming, a zombie in sight) restarts the clock */
+    private static boolean idleLook(Object chr, State s, long now, float[] out, boolean reset) throws Exception {
+        float px = ((Number) chrX.invoke(chr)).floatValue(), py = ((Number) chrY.invoke(chr)).floatValue();
+        Object fw = chrForward.invoke(chr);
+        float fx = ((Number) v2X.invoke(fw)).floatValue(), fy = ((Number) v2Y.invoke(fw)).floatValue();
+        float fl = (float) Math.sqrt(fx * fx + fy * fy);
+        if (fl < 1e-4f) return false;
+        fx /= fl;
+        fy /= fl;
+        boolean moved = !s.hasRef || Math.abs(px - s.rx) > STILL_MOVE || Math.abs(py - s.ry) > STILL_MOVE
+                || fx * s.rfx + fy * s.rfy < STILL_TURN;
+        if (reset || moved || idleSec <= 0f || busy(chr)) {
+            s.rx = px;
+            s.ry = py;
+            s.rfx = fx;
+            s.rfy = fy;
+            s.hasRef = true;
+            s.stillSince = now;
+            return false;
+        }
+        if (now - s.stillSince < (long) (idleSec * 1e9f)) return false;
+        float a = (float) Math.atan2(YAW_SIGN * (CAM_X * fy - CAM_Y * fx), CAM_X * fx + CAM_Y * fy);
+        if (Math.abs(a) > BEHIND) {
+            s.why = "standing still, facing away from the camera";
+            return false;
+        }
+        out[0] = Math.max(-MAX_YAW, Math.min(MAX_YAW, a));
+        out[1] = Math.min(MAX_PITCH_UP, PITCH_SHARE * CAM_PITCH);
+        s.why = String.format(Locale.ROOT, "standing still %.0f s: looking at the camera", (now - s.stillSince) / 1e9f);
+        return true;
+    }
+
+    /** sitting, or doing something (a timed action, an action animation): not "standing still" */
+    private static boolean busy(Object chr) throws Exception {
+        for (Method m : new Method[]{ sitGround, sitFurniture, timedActions, performing }) {
+            if (m != null && (Boolean) m.invoke(chr)) return true;
+        }
+        return false;
+    }
+
     /** the nearest zombie this player sees within 'cone' of the facing (in front or to the side; aiming: near the
-     *  aim line): {yaw, pitch} towards it */
+     *  aim line): {yaw, pitch} towards it; true when there is one (or one to glance at) */
     @SuppressWarnings("unchecked")
-    private static void target(Object chr, float[] out, State s, float cone) throws Exception {
+    private static boolean target(Object chr, float[] out, State s, float cone) throws Exception {
         boolean aimed = cone < BEHIND;
         Object cell = getCell.invoke(chr);
         List<Object> zs = cell == null ? null : (List<Object>) zombieList.invoke(cell);
         if (zs == null || zs.isEmpty()) {
             s.why = aimed ? "aiming" : "nothing";
-            return;
+            return false;
         }
         int pn = (Integer) playerNum.invoke(chr);
         float px = ((Number) chrX.invoke(chr)).floatValue(), py = ((Number) chrY.invoke(chr)).floatValue();
@@ -239,7 +296,7 @@ final class HeadLook {
         Object fw = chrForward.invoke(chr);
         float fx = ((Number) v2X.invoke(fw)).floatValue(), fy = ((Number) v2Y.invoke(fw)).floatValue();
         float fl = (float) Math.sqrt(fx * fx + fy * fy);
-        if (fl < 1e-4f) return;
+        if (fl < 1e-4f) return false;
         fx /= fl;
         fy /= fl;
         // the nearest zombie within the cone (looked at), and while aiming / in a stance also the nearest close one
@@ -283,14 +340,16 @@ final class HeadLook {
             out[1] = Math.max(-MAX_PITCH_DOWN, Math.min(MAX_PITCH_UP, PITCH_SHARE * pitch));
             s.why = String.format(Locale.ROOT, "%s%s %.1f tiles, %.0f deg %s", aimed ? (cone == AIM_CONE ? "aiming at " : "stance, ") : "",
                     crawl ? "crawler" : "zombie", best, Math.toDegrees(Math.abs(yaw)), yaw >= 0 ? "left" : "right");
+            return true;
         } else if (aimed && bestOut < GLANCE_RANGE) {
             out[0] = Math.max(-GLANCE_MAX, Math.min(GLANCE_MAX, GLANCE * yawOut));
             out[1] = Math.max(-MAX_PITCH_DOWN, Math.min(MAX_PITCH_UP, GLANCE * PITCH_SHARE * pitchOut));
             s.why = String.format(Locale.ROOT, "%s, glance at a %s %.1f tiles, %.0f deg %s", cone == AIM_CONE ? "aiming" : "stance",
                     crawlOut ? "crawler" : "zombie", bestOut, Math.toDegrees(Math.abs(yawOut)), yawOut >= 0 ? "left" : "right");
-        } else {
-            s.why = aimed ? "aiming" : "no zombie in sight";
+            return true;
         }
+        s.why = aimed ? "aiming" : "no zombie in sight";
+        return false;
     }
 
     // ---------------- turning the bones ----------------
@@ -537,11 +596,27 @@ final class HeadLook {
             hitReaction = igc.getMethod("hasHitReaction");
             weaponClass = Class.forName("zombie.inventory.types.HandWeapon", false, igc.getClassLoader());
             isRanged = weaponClass.getMethod("isRanged");
+            sitGround = optional(playerClass, "isSitOnGround");
+            sitFurniture = optional(playerClass, "isSittingOnFurniture");
+            timedActions = optional(playerClass, "hasTimedActions");
+            performing = optional(playerClass, "isPerformingAnAction");
             ready = true;
-            RBSHook.log(String.format(Locale.ROOT, "head look ready - the player looks at the nearest zombie in sight within %.0f tiles (down at crawlers; aiming a gun: in the aim line; melee stance: in front)", range));
+            RBSHook.log(String.format(Locale.ROOT, "head look ready - the player looks at the nearest zombie in sight within %.0f tiles (down at crawlers; aiming a gun: in the aim line; melee stance: in front)%s",
+                    range, idleSec > 0f ? String.format(Locale.ROOT, "; standing still %.0f s: at the camera", idleSec) : ""));
         } catch (Throwable t) {
             failed = true;
             RBSHook.warn("head look init failed, the head is left alone: " + t);
+        }
+    }
+
+    /** a public no-argument boolean method, or null when this game version has none */
+    private static Method optional(Class<?> c, String name) {
+        try {
+            Method m = c.getMethod(name);
+            return m.getReturnType() == boolean.class ? m : null;
+        } catch (NoSuchMethodException e) {
+            RBSHook.log("head look: " + c.getSimpleName() + "." + name + "() not found - not used for 'standing still'");
+            return null;
         }
     }
 
@@ -556,7 +631,7 @@ final class HeadLook {
             if (mt == cfgMtime) return;
             cfgMtime = mt;
             boolean en = enabled, zo = zombiesOn;
-            float rg = range;
+            float rg = range, id = 0f;                          // no idle line (an older mod): off
             for (String line : Files.readAllLines(p, StandardCharsets.UTF_8)) {
                 int eq = line.indexOf('=');
                 if (eq < 0 || line.trim().startsWith("#")) continue;
@@ -566,6 +641,7 @@ final class HeadLook {
                         case "enabled": en = !(v.equals("0") || v.equalsIgnoreCase("false")); break;
                         case "range": rg = (float) Math.max(1, Math.min(30, Double.parseDouble(v))); break;
                         case "zombies": zo = !(v.equals("0") || v.equalsIgnoreCase("false")); break;
+                        case "idle": id = (float) Math.max(0, Math.min(3600, Double.parseDouble(v))); break;
                         default: break;
                     }
                 } catch (NumberFormatException ignored) {}
@@ -573,7 +649,9 @@ final class HeadLook {
             enabled = en;
             zombiesOn = zo;
             range = rg;
-            RBSHook.log(String.format(Locale.ROOT, "head look config: enabled=%s range=%.0f tiles, zombies=%s", en, rg, zo));
+            idleSec = id;
+            RBSHook.log(String.format(Locale.ROOT, "head look config: enabled=%s range=%.0f tiles, zombies=%s, standing still: %s",
+                    en, rg, zo, id > 0f ? String.format(Locale.ROOT, "at the camera after %.0f s", id) : "off"));
         } catch (Exception e) {
             RBSHook.warn("head look config: " + e);
         }

@@ -10,7 +10,7 @@ this patch adds them:
   zombie copies your character's shape. With it, **each zombie and each corpse gets its own body (thin, normal, fat
   or obese) and its own height**, and its clothes fit that body.
 - **Head look (v6):** your character turns their head toward the nearest zombie in sight, and zombies chasing you
-  look at you.
+  look at you. Left standing still for two minutes, your character looks up at the camera.
 - **Soft body physics (v6):** bellies, bust, buttocks and backpacks bounce as characters move, characters breathe,
   bodies shake when hit.
 - **Missing limbs (v5):** hands, forearms, arms and legs really go missing for the optional *Zombie Dismemberment*
@@ -121,8 +121,9 @@ RealBodyShape.HEIGHT = { enabled = true, spread = 15 }
 -- underwear = bust / buttocks with only underwear (or nothing) on them (130 = x1.3)
 RealBodyShape.JIGGLE = { enabled = true, strength = 50, players = true, player_from = 82,
                          limbs = 100, bust = 60, bags = 100, breathing = 100, hits = 100, butt = 100, underwear = 130 }
--- head look: range in tiles; zombies = zombies chasing you look at you
-RealBodyShape.LOOK = { enabled = true, range = 8, zombies = true }
+-- head look: range in tiles; zombies = zombies chasing you look at you;
+-- idle = seconds standing still before your character looks at the camera (0 = off)
+RealBodyShape.LOOK = { enabled = true, range = 8, zombies = true, idle = 120 }
 ```
 
 Each zombie's variant and height are derived from how it looks (skin, body hair, hair, beard, hair colour - the
@@ -138,6 +139,8 @@ save.
 - The head is left to the game in vehicles, asleep, climbing, lying down and when the game turns it itself.
 - Looks only: what your character can see in the game does not change.
 - Zombies that are chasing you turn their heads to you; the ones that have not noticed you don't.
+- Standing still for two minutes (not walking, turning, aiming, sitting or doing an action, no zombie in sight),
+  your character looks up at the camera. Any move hands the head back. Facing away from the camera, they don't turn.
 
 ## 4b. Dismembered zombies (optional, patch v5 or newer)
 
@@ -230,7 +233,8 @@ restore `ProjectZomboid64.json.rbs_backup` by hand.
   items, corpses and the game's hit points follow, and nothing builds up from frame to frame.
 - **Head look (v6):** `rbs.HeadLook` turns the neck (35 %) and head (65 %) in model space at the same point, smoothed
   and speed-limited. It picks the nearest zombie the player is shown on screen; it never changes what the game
-  thinks the character sees.
+  thinks the character sees. Standing still, the target is the camera of the isometric view (south-east, 30 degrees
+  up).
 - **Soft body physics (v6):** `rbs.Jiggle` runs a small spring per character (belly, bust, buttocks, bag, breathing,
   hit shake) and writes the offsets into the two last slots of the matrix palette (58 and 59, unused by the game's
   skeletons). The body and clothes are drawn with the shader `RBSJiggle` that Real Body Shape 0.3.4+ ships (the
@@ -283,7 +287,7 @@ MIT – see `LICENSE`. Project Zomboid is a trademark of The Indie Stone; this p
 ## มันทำอะไร
 ปกติเกมใช้โมเดลร่างกาย "ตัวเดียว" ร่วมกันทั้งผู้เล่นและซอมบี้ทุกตัว mod Real Body Shape จึงทำให้ซอมบี้อ้วน/ผอมตามผู้เล่น
 แพตช์นี้แก้จุดนั้น: ซอมบี้แต่ละตัว (และศพของมัน) ได้ร่างของตัวเอง ผอม / ปกติ / อ้วน / อ้วนมาก และส่วนสูงของตัวเอง คงที่ต่อตัว ส่วนผู้เล่นยังเปลี่ยนตามน้ำหนักจริงเหมือนเดิม
-- v6: ตัวละครหันหัวมองซอมบี้ที่มองเห็น ซอมบี้ที่ไล่เราหันมามอง (แค่ภาพ ไม่เปลี่ยนการมองเห็นในเกม)
+- v6: ตัวละครหันหัวมองซอมบี้ที่มองเห็น ซอมบี้ที่ไล่เราหันมามอง ยืนนิ่งครบ 2 นาทีตัวละครเงยหน้ามองกล้อง (แค่ภาพ ไม่เปลี่ยนการมองเห็นในเกม)
 - v6: ส่วนนิ่มกระเพื่อม ท้อง หน้าอก ก้น กระเป๋าหลัง การหายใจ การสั่นตอนโดนตี และกระโปรงคลุมตักตอนนั่ง
 - v5: ซ่อนแขน/ขาที่ขาดให้ mod ตัวเลือก Zombie Dismemberment
 
@@ -309,7 +313,7 @@ MIT – see `LICENSE`. Project Zomboid is a trademark of The Indie Stone; this p
 
 ## ตั้งค่า
 ทุกค่าอยู่ใน `RealBodyShape.lua` ของ mod: `RealBodyShape.ZOMBIES` (สัดส่วนซอมบี้ ผอม 15 / ปกติ 55 / อ้วน 22 / อ้วนมาก 8),
-`RealBodyShape.HEIGHT` (ส่วนสูง ±15%), `RealBodyShape.JIGGLE` (การกระเพื่อม เป็น %), `RealBodyShape.LOOK` (การหันหัว)
+`RealBodyShape.HEIGHT` (ส่วนสูง ±15%), `RealBodyShape.JIGGLE` (การกระเพื่อม เป็น %), `RealBodyShape.LOOK` (การหันหัว; `idle` = ยืนนิ่งกี่วินาทีแล้วมองกล้อง, 0 = ปิด)
 (`enabled = false` = ปิดส่วนนั้นโดยไม่ต้องถอดแพตช์) ค่าใหม่มีผลภายในไม่กี่วินาทีหลังโหลดเซฟ ไม่ต้องเปิดเกมใหม่
 
 ## ซอมบี้แขน/ขาขาด (ตัวเลือก, แพตช์ v5 ขึ้นไป)
