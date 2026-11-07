@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
  *                                                        layer right after the skin (blood, dirt, makeup and
  *                                                        clothes still go over it)
  * Zombie skins (ZedBody) have no layer. No layer file (the mod off) -> nothing happens.
- * A skin texture another mod replaces (Tomb's Player Body ships its own FemaleBody01..05 with another layout, skin
+ * A skin texture another mod replaces (a body mod that ships its own FemaleBody01..05 with another layout, skin
  * retextures...) gets no layer either: it is painted for the game's own skins (2026-11-07).
  */
 final class FaceLayer {
