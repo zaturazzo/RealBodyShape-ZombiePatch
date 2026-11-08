@@ -38,7 +38,8 @@ import java.util.WeakHashMap;
  *
  * On top of the belly (0.3.4), in slot 58 when the mesh's palette leaves it free (a marker says the slot is ours):
  *   - the bust: its own softer spring, women (players and zombies) and fat / obese men's chests
- *   - bags on the back: a looser spring, everyone; the shader moves what is skinned to Bip01_BackPack
+ *   - bags on the back: a looser spring, everyone; the shader moves what is skinned to Bip01_BackPack. Bags, packs,
+ *     webbing, canteens, chest rigs and armour get RBSJiggleBag (v6.5): only the belly, breathing and that sway, see SHADER_BAG
  *   - the buttocks, thighs and the underside of the upper arms: the belly's up/down lag (fat and obese only)
  *   - breathing (players): deeper and faster when out of breath, running or sprinting
  *   - hits and falls kick every spring (a hit from the front throws the soft parts forward, landing on the floor too)
@@ -50,6 +51,12 @@ import java.util.WeakHashMap;
 final class Jiggle {
     static final String CONFIG = "RealBodyShape_jiggle.txt";
     static final String SHADER = "RBSJiggle";
+    /** bags, packs, webbing, canteens, chest rigs (v6.5): RBSJiggle with RBS_BAG - the belly, breathing and their own sway, not the
+     *  bust / buttocks / thighs / arms, which bounce under them. A duffel over the buttocks and the straps of a pack
+     *  across the bust bounced like flesh (user, 2026-11-08: the straps stay still, the bust moves under them) */
+    static final String SHADER_BAG = "RBSJiggleBag";
+    /** 0 not looked for yet, 1 compiled, 2 missing (Real Body Shape older than 0.3.6) or failed: bags get SHADER */
+    private static volatile int bagShaderState = 0;
     static final int SLOTS = 60, SLOT = 59, SLOT2 = 58;
     /** row 0 w of slot 58: the shader trusts the slot only with this in it (a real bone matrix never has exactly 58) */
     static final float MAGIC = 58f;
@@ -74,8 +81,12 @@ final class Jiggle {
      *  an overweight belly); a little stiffer than the bust. Gain by weight: x0.6 at 50 kg, x1 at 80, x1.3 from 110 */
     static final float FREQ_BUTT = 3.0f, DAMP_BUTT = 0.26f, BUTT_UP = 1.0f, BUTT_FORWARD = 0.3f, MAX_LAG_BUTT = 0.05f;
     static final float BUTT_PLAYER = 0.8f;
+    /** the bust and the belly under torso armour or a chest rig (players): those do not move with them (RBSJiggleBag)
+     *  and hold them - a chest rig can cover the bust like a plate (user, 2026-11-08); no underwear boost
+     *  under them either. The buttocks, thighs and arms keep their bounce */
+    static final float HOLD = 0.25f;
     /** bust / buttocks with nothing on them but underwear (or nothing): x1.3 - clothes hold them (user, 2026-11-07) */
-    static final float UNDERWEAR_BOOST = 1.3f;            // 1.5 was a little much (user, 2026-11-07)
+    static final float UNDERWEAR_BOOST = 1.3f;           // 1.5 was a little much (user, 2026-11-07)
     static final float[] BUST_MALE = { 0f, 0f, 0.3f, 0.6f };
     /** bags on the back: heavier and looser than flesh. Bounced a little too much in game with 0.16 / 1.0 / 0.7 and hit
      *  the 0.12 limit at once (2026-11-06): more damping, less of it, and a soft limit instead of a hard stop */
@@ -109,6 +120,7 @@ final class Jiggle {
     private static Method chrX, chrY, chrForward, v2X, v2Y, chrFemale, chrAnimal, chrNutrition, nutWeight;
     private static Method chrHasHit, chrHitBehind, chrOnFloor, chrStats, statsGet, chrRunning, chrSprinting;
     private static Method chrWorn, wornSize, wornGet, wornLocation, chrSitGround, chrSitFurniture, chrActionState;
+    private static Method wornItem, itemType;
     /** the action states of sitting (not the sitting down, not the getting up: in a stride the web held by the two
      *  thighs cut across between the legs - user, 2026-11-07); released faster than taken */
     static final java.util.Set<String> SIT_STATES = new java.util.HashSet<>(java.util.Arrays.asList(
@@ -234,9 +246,64 @@ final class Jiggle {
         if (!wearer || shaderState != 2 || !enabled) return shaderName;
         if (shaderName != null && !shaderName.toString().isEmpty() && !shaderName.toString().equalsIgnoreCase("basicEffect"))
             return shaderName;                                  // a piece with its own shader keeps it
-        String m = mesh == null ? "" : mesh.toString().toLowerCase(Locale.ROOT);
+        String m = mesh == null ? "" : mesh.toString().toLowerCase(Locale.ROOT).replace('\\', '/');
         if (m.contains("hair") || m.contains("beard")) return shaderName;
+        if (isGear(m) && bagShaderThere()) return SHADER_BAG;
         return SHADER;
+    }
+
+    /** what is stiff or hangs on the body rather than fitting it like cloth: the game's and mods' bag folder
+     *  (Skinned/BackPacks: packs, satchels, duffels, the ALICE webbing, fanny packs, bags in hand), canteens, chest
+     *  rigs, and the skinned armour that lies on a soft part (cuirasses, bullet / catcher vests, shoulder pads, the
+     *  ammo strap, the codpiece; user, 2026-11-08 "there is armour too"). Torso armour and chest rigs also hold the
+     *  bust and the belly (HOLD), which would push through them otherwise */
+    static final String[] GEAR = { "backpacks/", "canteen", "cuirass", "bulletvest", "catchervest", "shoulderpad",
+            "football_pads", "articshoulder", "ammostrap", "codpiece", "kneepad", "shinkneeguard", "shinpad",
+            "elbowpad", "gorget", "scba", "shoulderholster" };  // static pieces (greaves, metal pads) never come here
+    // checked against every skinned clothing model of the game and a big clothing mod (2026-11-08): what lies on a soft part
+    // and is not cloth is here; necklaces, ties, scarves, tails, garters and vests stay with the body on purpose
+
+    static boolean isGear(String m) {
+        for (String g : GEAR) if (m.contains(g)) return true;
+        return isChestRig(m);
+    }
+
+    /** worn there, the bust and the belly are held (HOLD): torso armour (B42 body location ids, lower case) */
+    static final java.util.Set<String> HOLDS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "cuirass", "torsoextravestbullet", "sportshoulderpad", "sportshoulderpadontop"));
+
+    /** "chestrig" in a mesh path or an item type (Bag_ChestRig and mods' rigs), not the zombie wound
+     *  overlay ZedDmg_ShotgunChestRight */
+    static boolean isChestRig(String s) {
+        return s.contains("chestrig") && !s.contains("chestright");
+    }
+
+    private static boolean bagShaderThere() {
+        return bagShaderState == 1;                             // compiled in shaderReady, with RBSJiggle
+    }
+
+    /** compiles RBSJiggleBag on that model (shaderReady puts its shader back afterwards): 1 ok, 2 missing / failed */
+    private static int compileBagShader(Object model) {
+        try {
+            String vert = (String) mGetString.invoke(fileSystem, "media/shaders/" + SHADER_BAG + ".vert");
+            String frag = (String) mGetString.invoke(fileSystem, "media/shaders/" + SHADER_BAG + ".frag");
+            if (vert == null || frag == null || !new File(vert).isFile() || !new File(frag).isFile()) {
+                RBSHook.log("jiggle: " + SHADER_BAG + " not found (Real Body Shape older than 0.3.6) - bags move like the clothes");
+                return 2;
+            }
+            mCreateShader.invoke(model, SHADER_BAG);
+            Object b = fEffect.get(model);
+            Object prog = b == null ? null : mShaderProgram.invoke(b);
+            if (b != null && SHADER_BAG.equalsIgnoreCase(String.valueOf(mShaderName.invoke(b)))
+                    && prog != null && (Boolean) mIsCompiled.invoke(prog)) {
+                RBSHook.log("jiggle: bags, packs, webbing, canteens, chest rigs and armour use " + SHADER_BAG + " - they sway, the bust, buttocks and thighs bounce under them");
+                return 1;
+            }
+            RBSHook.warn("jiggle: " + SHADER_BAG + " did not compile (see the shader errors above) - bags move like the clothes");
+        } catch (Throwable t) {
+            RBSHook.warn("jiggle: " + SHADER_BAG + " failed: " + t + " - bags move like the clothes");
+        }
+        return 2;
     }
 
     private static boolean shaderReady(Object model) throws Exception {
@@ -264,6 +331,7 @@ final class Jiggle {
                 RBSHook.warn("jiggle: shader " + SHADER + " did not compile (see the shader errors above) - everyone keeps the game's shader");
                 return false;
             }
+            bagShaderState = compileBagShader(model);
             fEffect.set(model, before);                          // use() records it and switches
             shader = s;
             shaderState = 2;
@@ -413,7 +481,7 @@ final class Jiggle {
             if (chr == null) return;
             long[] z = whoOf(player);
             boolean female = z[2] == 1;
-            float gain, bust, bag = bagsPct, breath = 0f, butt = 0f;
+            float gain, bust, bag = bagsPct, breath = 0f, butt = 0f, bellyHold = 1f;
             Object model;
             if (z[0] == 1 && z[1] >= 0) {
                 if (!RBSHook.zombiesEnabled()) return;
@@ -425,11 +493,12 @@ final class Jiggle {
                 gain = playerGain(chr);
                 bust = female ? BUST_PLAYER : gain * BUST_MALE_PLAYER;
                 breath = breathPct;
-                if (female) {
-                    long[] b = bareOf(chr);
-                    if (b[0] == 1) bust *= underwearBoost;
-                    butt = BUTT_PLAYER * buttPct * buttWeight(chr) * (b[1] == 1 ? underwearBoost : 1f);
-                }
+                long[] b = bareOf(chr);
+                if (b[3] == 1) {                                // torso armour / a chest rig: still, and holds them
+                    bust *= HOLD;
+                    bellyHold = HOLD;
+                } else if (female && b[0] == 1) bust *= underwearBoost;
+                if (female) butt = BUTT_PLAYER * buttPct * buttWeight(chr) * (b[1] == 1 ? underwearBoost : 1f);
                 model = fieldOf(female ? fFemaleBody : fMaleBody);
             } else {
                 State old = states.get(player);
@@ -467,8 +536,8 @@ final class Jiggle {
             boolean relinked = fEffect.get(model) != shader;
             if (relinked) use(model);                           // a reloaded body can come back with the game's shader
             if (relinked && z[0] == 2 && playerLogs++ < 12) RBSHook.log("jiggle: player's body had the game's shader again (reloaded?) - switched back");
-            s.gain = Math.max(0f, gain);
-            s.limbGain = s.gain * limbsPct;
+            s.gain = Math.max(0f, gain) * bellyHold;
+            s.limbGain = Math.max(0f, gain) * limbsPct;     // not held: the buttocks, thighs and arms are not under it
             s.bustGain = bust;
             s.buttGain = butt;
             s.player = z[0] == 2;
@@ -513,31 +582,40 @@ final class Jiggle {
             "longdress", "legs1", "legs5", "torso1legs1", "boilersuit", "fullsuit", "fullsuithead", "fullsuitheadscba",
             "bathrobe", "fullrobe", "bodycostume"));
 
-    /** {bare chest 1/0, bare hips 1/0, expiry}: looked at again once a second */
+    /** {bare chest 1/0, bare hips 1/0, expiry, held 1/0 (torso armour or a chest rig)}: looked at again once a second */
     private static long[] bareOf(Object chr) throws Exception {
         long now = System.nanoTime();
         long[] e = bare.get(chr);
         if (e != null && now < e[2]) return e;
-        long[] r = { 0, 0, now + 1_000_000_000L };
+        long[] r = { 0, 0, now + 1_000_000_000L, 0 };
         if (chrWorn != null) {
             Object worn = chrWorn.invoke(chr);
-            boolean chest = false, hips = false;
+            boolean chest = false, hips = false, rig = false;
             int n = worn == null ? 0 : (Integer) wornSize.invoke(worn);
             for (int i = 0; i < n; i++) {
                 Object wi = wornGet.invoke(worn, i);
-                Object loc = wi == null ? null : wornLocation.invoke(wi);
+                if (wi == null) continue;
+                if (itemType != null && !rig) {
+                    Object item = wornItem.invoke(wi);
+                    Object type = item == null ? null : itemType.invoke(item);
+                    if (type != null && isChestRig(type.toString().toLowerCase(Locale.ROOT))) rig = true;
+                }
+                Object loc = wornLocation.invoke(wi);
                 if (loc == null) continue;
                 String id = loc.toString().toLowerCase(Locale.ROOT);
                 int c = id.indexOf(':');
                 if (c >= 0) id = id.substring(c + 1);
                 if (CHEST.contains(id)) chest = true;
                 if (HIPS.contains(id)) hips = true;
+                if (HOLDS.contains(id)) rig = true;
             }
             r[0] = chest ? 0 : 1;
             r[1] = hips ? 0 : 1;
-            if (e == null || e[0] != r[0] || e[1] != r[1]) {
+            r[3] = rig ? 1 : 0;
+            if (e == null || e[0] != r[0] || e[1] != r[1] || e[3] != r[3]) {
                 if (playerLogs++ < 30) RBSHook.log("jiggle: player wears " + (chest ? "something over the bust" : "only underwear (or nothing) over the bust")
-                        + ", " + (hips ? "something over the hips" : "only underwear (or nothing) over the hips"));
+                        + ", " + (hips ? "something over the hips" : "only underwear (or nothing) over the hips")
+                        + (rig ? ", torso armour or a chest rig (holds the bust and the belly)" : ""));
             }
         }
         bare.put(chr, r);
@@ -965,6 +1043,15 @@ final class Jiggle {
             } catch (Throwable t) {
                 chrWorn = null;
                 RBSHook.log("jiggle: worn items not readable (" + t + ") - no underwear-only bounce");
+            }
+            if (chrWorn != null) {
+                try {                                                           // chest rigs: optional
+                    wornItem = wornGet.getReturnType().getMethod("getItem");
+                    itemType = wornItem.getReturnType().getMethod("getType");
+                } catch (Throwable t) {
+                    itemType = null;
+                    RBSHook.log("jiggle: worn item types not readable (" + t + ") - a chest rig does not hold the bust");
+                }
             }
             try {                                                               // breathing only: optional
                 chrStats = igc.getMethod("getStats");

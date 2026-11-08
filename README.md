@@ -12,7 +12,8 @@ this patch adds them:
 - **Head look (v6):** your character turns their head toward the nearest zombie in sight, and zombies chasing you
   look at you. Left standing still for two minutes, your character looks up at the camera.
 - **Soft body physics (v6):** bellies, bust, buttocks and backpacks bounce as characters move, characters breathe,
-  bodies shake when hit.
+  bodies shake when hit. Since v6.5, bags, packs, canteens, chest rigs and armour stay stiff: they sway but do not
+  bounce like the body, and chest armour and chest rigs hold the bust and the belly.
 - **Missing limbs (v5):** hands, forearms, arms and legs really go missing for the optional *Zombie Dismemberment*
   mod.
 
@@ -88,7 +89,7 @@ this patch adds them:
 
 Open `%USERPROFILE%\Zomboid\console.txt` after loading a save and look for:
 ```
-[RBS hook] ready (classpath) v6 - zombies and corpses use RBS_Zombie*_{Thin,Normal,Fat,Obese} model scripts; game classes match the patch source
+[RBS hook] ready (classpath) v6.5 - zombies and corpses use RBS_Zombie*_{Thin,Normal,Fat,Obese} model scripts; game classes match the patch source
 [RBS hook] config: enabled=true thin/normal/fat/obese=15/55/22/8
 [RBS hook] jiggle config: enabled=true strength=50% players=true (from 82 kg) bust=60% bags=100% limbs=100% breathing=100% hits=100% buttocks=100% underwear only x1.30
 [RBS hook] height config: enabled=true spread=+/-15.0%
@@ -239,7 +240,10 @@ restore `ProjectZomboid64.json.rbs_backup` by hand.
   hit shake) and writes the offsets into the two last slots of the matrix palette (58 and 59, unused by the game's
   skeletons). The body and clothes are drawn with the shader `RBSJiggle` that Real Body Shape 0.3.4+ ships (the
   game's `basicEffect` plus those offsets), which moves each vertex by its bind-pose position, so the body and every
-  clothing piece on it move together.
+  clothing piece on it move together. Since v6.5, pieces that are stiff or hang on the body (the `BackPacks` model
+  folder, canteens, chest rigs, skinned armour) get `RBSJiggleBag` instead, the same shader with `RBS_BAG` defined
+  (Real Body Shape 0.3.6+): only the belly, breathing and their own sway, so the bust, buttocks and thighs move under
+  them. Torso armour and chest rigs also hold the player's bust and belly (25 %). Without that shader they move as before.
 - **Face layer (prepared, v6):** `SmartTexture.calculate()` and `ModelInstanceTextureCreator.init(...)` are hooked so a
   later version of the mod can add a finer face layer to player skins. Without the layer files nothing happens.
 - **ZombieBuddy build:** the same runtime classes, renamed to the package `rbszb` and loaded by ZombieBuddy with
@@ -289,6 +293,7 @@ MIT – see `LICENSE`. Project Zomboid is a trademark of The Indie Stone; this p
 แพตช์นี้แก้จุดนั้น: ซอมบี้แต่ละตัว (และศพของมัน) ได้ร่างของตัวเอง ผอม / ปกติ / อ้วน / อ้วนมาก และส่วนสูงของตัวเอง คงที่ต่อตัว ส่วนผู้เล่นยังเปลี่ยนตามน้ำหนักจริงเหมือนเดิม
 - v6: ตัวละครหันหัวมองซอมบี้ที่มองเห็น ซอมบี้ที่ไล่เราหันมามอง ยืนนิ่งครบ 2 นาทีตัวละครเงยหน้ามองกล้อง (แค่ภาพ ไม่เปลี่ยนการมองเห็นในเกม)
 - v6: ส่วนนิ่มกระเพื่อม ท้อง หน้าอก ก้น กระเป๋าหลัง การหายใจ การสั่นตอนโดนตี และกระโปรงคลุมตักตอนนั่ง
+- v6.5: กระเป๋า เป้ กระติกน้ำ chest rig และเกราะ ไม่เด้งตามเนื้อแล้ว (แกว่งของมันเอง) เกราะลำตัวกับ chest rig รัดอกและพุงให้เด้งน้อยลง (ต้องใช้ mod 0.3.6 ขึ้นไป)
 - v5: ซ่อนแขน/ขาที่ขาดให้ mod ตัวเลือก Zombie Dismemberment
 
 **ใช้ ZombieBuddy อยู่แล้ว?** ไม่ต้องโหลดตัวนี้ ใน Workshop item มี **Real Body Shape - zombie patch through ZombieBuddy** เปิดใน mod list ได้เลย ถ้าลงทั้งสองแบบ จะใช้ตัว ZombieBuddy
@@ -306,7 +311,7 @@ MIT – see `LICENSE`. Project Zomboid is a trademark of The Indie Stone; this p
    ถ้าขึ้น `Project Zomboid folder not found` ให้เปิด cmd แล้วรัน `install.bat "D:\...\steamapps\common\ProjectZomboid"`
    อัปเดตจากเวอร์ชันเก่า: รัน `install.bat` ตัวใหม่ได้เลย มันแทนของเดิมให้
 4. เปิดเกม → Mods → เปิดทั้ง Real Body Shape และ Real Body Shape - Zombie Bodies (จะเปิด Zombie Dismemberment ด้วยก็ได้) → โหลดเซฟ
-5. เช็คใน `%USERPROFILE%\Zomboid\console.txt` ต้องมี `[RBS hook] ready (classpath) v6 ...` และ `[RealBodyShape] zombie bodies: patch active`
+5. เช็คใน `%USERPROFILE%\Zomboid\console.txt` ต้องมี `[RBS hook] ready (classpath) v6.5 ...` และ `[RealBodyShape] zombie bodies: patch active`
 
 สิ่งที่ถูกแก้ในเครื่อง: สร้าง `%USERPROFILE%\Zomboid\RealBodyShape\rbs_patch.jar` (สร้างจาก `projectzomboid.jar` ของคุณเอง)
 และเติม 1 รายการหน้า `"classpath"` ใน `ProjectZomboid64.json` ของเกม (สำรองไฟล์เดิมเป็น `.rbs_backup`) ไม่แตะไฟล์อื่นของเกมเลย
