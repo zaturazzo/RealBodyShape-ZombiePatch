@@ -1,4 +1,4 @@
-# Real Body Shape – patch v6.5 (Project Zomboid Build 42, Windows)
+# Real Body Shape – patch v6.6 (Project Zomboid Build 42, Windows)
 
 Unofficial companion for the Steam Workshop item **Real Body Shape** (id 3830730496, version 0.3.4 or newer; 0.3.6 for stiff bags and armour), which
 contains four mods: *Real Body Shape*, *Real Body Shape - Zombie Bodies*, *Real Body Shape - Zombie Dismemberment*
@@ -26,12 +26,12 @@ Full manual, troubleshooting and source code: https://github.com/zaturazzo/RealB
    `install.bat "D:\path\to\steamapps\common\ProjectZomboid"`. Updating from an older version: just run it, it
    replaces the old entry.
 3. Start the game, enable *Real Body Shape* and *Real Body Shape - Zombie Bodies* (plus *Zombie Dismemberment* if you
-   want), load your save. `%USERPROFILE%\Zomboid\console.txt` should contain `[RBS hook] ready (classpath) v6.5 ...` and
+   want), load your save. `%USERPROFILE%\Zomboid\console.txt` should contain `[RBS hook] ready (classpath) v6.6 ...` and
    `[RealBodyShape] zombie bodies: patch active (classpath), Zombie Bodies mod on`.
 
 - `status.bat` – what is installed, and whether the patch still matches the game version.
 - `uninstall.bat` – removes the patch again (the game starts exactly as before).
-- After a game update the patch switches itself off; run `install.bat` again.
+- After a game update, run `install.bat` again. If the game closes right at the start, install the newest patch (v6.6 or later is needed for game 42.22.2), or delete the folder `Zomboid\RealBodyShape` in your user folder to play without the patch.
 - Settings are in the mod's `RealBodyShape.lua`: `RealBodyShape.ZOMBIES` (zombie mix, default 15/55/22/8),
   `HEIGHT`, `JIGGLE`, `LOOK`; limb rates in `RealBodyShape.LIMBS` of `RealBodyShapeLimbs.lua`.
 

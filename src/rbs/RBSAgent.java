@@ -26,7 +26,7 @@ import java.security.ProtectionDomain;
  * The game files on disk are never modified.
  */
 public final class RBSAgent {
-    public static final String VERSION = "6.5";
+    public static final String VERSION = "6.6";
     static final String HOOK_CLASS = "rbs/RBSHook";
     static final String MODEL = "zombie/core/skinnedmodel/model/Model";
     static final String RENAMED_BODY = "getBodyModel$rbs";

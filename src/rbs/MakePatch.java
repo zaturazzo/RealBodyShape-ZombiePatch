@@ -14,8 +14,10 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
@@ -70,6 +72,7 @@ public final class MakePatch {
     static void install(Path game, Path installDir, Path jar, Path launcher) throws Exception {
         Path gameJar = game.resolve("projectzomboid.jar");
         Map<String, byte[]> patched = new HashMap<>();
+        Map<String, byte[]> mates;
         List<String> hashes = new ArrayList<>();
         try (JarFile jf = new JarFile(gameJar.toFile())) {
             for (String cls : RBSAgent.targets()) {
@@ -80,11 +83,15 @@ public final class MakePatch {
                 hashes.add(cls + ".class=" + RBSHook.sha256(orig));
                 System.out.println("patched  : " + cls + " (" + orig.length + " -> " + patched.get(cls + ".class").length + " bytes)");
             }
+            mates = packageMates(jf, patched);
+            for (Map.Entry<String, byte[]> e : mates.entrySet()) hashes.add(e.getKey() + "=" + RBSHook.sha256(e.getValue()));
+            System.out.println("copied   : " + mates.size() + " other classes of the same packages, unchanged");
         }
         verify(patched, gameJar);
         Files.createDirectories(installDir);
         try (ZipOutputStream z = new ZipOutputStream(Files.newOutputStream(jar))) {
             for (Map.Entry<String, byte[]> e : patched.entrySet()) put(z, e.getKey(), e.getValue());
+            for (Map.Entry<String, byte[]> e : mates.entrySet()) put(z, e.getKey(), e.getValue());
             for (Map.Entry<String, byte[]> e : ownClasses().entrySet()) put(z, e.getKey(), e.getValue());
             put(z, "rbs/source.sha256", (String.join("\n", hashes) + "\n").getBytes(StandardCharsets.UTF_8));
             put(z, "rbs/source.txt", (gameJar + "\nsize=" + Files.size(gameJar) + "\nmtime=" + Files.getLastModifiedTime(gameJar).toMillis() + "\n").getBytes(StandardCharsets.UTF_8));
@@ -92,6 +99,25 @@ public final class MakePatch {
         System.out.println("written  : " + jar + " (" + Files.size(jar) / 1024 + " KB)");
         editLauncher(launcher, jar, true);
         System.out.println("DONE. Start the game, enable the mods 'Real Body Shape' and 'Real Body Shape - Zombie Bodies' (+ 'Zombie Dismemberment' if you like), then check console.txt for '[RBS hook] ready'.");
+    }
+
+    /**
+     * the other classes of each patched package, unchanged. projectzomboid.jar is signed since 42.22.2 and the JVM refuses a
+     * package with classes from both a signed and an unsigned jar (SecurityException as the game starts), so this unsigned
+     * jar, first on the classpath, must hold those packages whole
+     */
+    static Map<String, byte[]> packageMates(JarFile jf, Map<String, byte[]> patched) throws IOException {
+        Set<String> dirs = new HashSet<>();
+        for (String n : patched.keySet()) dirs.add(n.substring(0, n.lastIndexOf('/')));
+        Map<String, byte[]> out = new HashMap<>();
+        Enumeration<JarEntry> en = jf.entries();
+        while (en.hasMoreElements()) {
+            JarEntry e = en.nextElement();
+            String n = e.getName();
+            int i = n.lastIndexOf('/');
+            if (i > 0 && n.endsWith(".class") && !patched.containsKey(n) && dirs.contains(n.substring(0, i))) out.put(n, jf.getInputStream(e).readAllBytes());
+        }
+        return out;
     }
 
     /**

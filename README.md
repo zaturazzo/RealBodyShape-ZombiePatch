@@ -89,7 +89,7 @@ this patch adds them:
 
 Open `%USERPROFILE%\Zomboid\console.txt` after loading a save and look for:
 ```
-[RBS hook] ready (classpath) v6.5 - zombies and corpses use RBS_Zombie*_{Thin,Normal,Fat,Obese} model scripts; game classes match the patch source
+[RBS hook] ready (classpath) v6.6 - zombies and corpses use RBS_Zombie*_{Thin,Normal,Fat,Obese} model scripts; game classes match the patch source
 [RBS hook] config: enabled=true thin/normal/fat/obese=15/55/22/8
 [RBS hook] jiggle config: enabled=true strength=50% players=true (from 82 kg) bust=60% bags=100% limbs=100% breathing=100% hits=100% buttocks=100% underwear only x1.30
 [RBS hook] height config: enabled=true spread=+/-15.0%
@@ -165,7 +165,7 @@ visible. Zombies that look identical (same outfit, hair, skin and hair colour) s
 
 ## 5. After a game update
 
-Steam rewrites `ProjectZomboid64.json` when the game updates, which **removes the patch automatically** – the game
+Steam usually rewrites `ProjectZomboid64.json` when the game updates, which **removes the patch automatically** – the game
 starts normally, zombies just share the player's body again. `status.bat` then says `patch NOT installed` or
 `STALE` (the game's classes changed). Simply run `install.bat` again: it rebuilds `rbs_patch.jar` from the new
 game version. If the game's internals changed too much, `install.bat` stops with a clear error and nothing is
@@ -184,6 +184,7 @@ restore `ProjectZomboid64.json.rbs_backup` by hand.
 | `Project Zomboid folder not found` | Non-Steam install or unusual library path. Run `install.bat "<game folder>"`. |
 | `ERROR: the JVM rejected the patched class ...` | Unsupported game version. Nothing was installed – report the game version. |
 | `class ... not found in projectzomboid.jar` | Same: the game changed; wait for a patch update. |
+| The game closes right at the start, `console.txt` says "signer information" | The patch is older than v6.6 and the game is 42.22.2 or newer. Run `install.bat` from v6.6, or delete the folder `Zomboid\RealBodyShape` in your user folder to play without the patch. |
 | Game does not start after install | Run `uninstall.bat` (or restore the `.rbs_backup`). Then post `console.txt`. |
 | No `[RBS hook]` lines in `console.txt` | The game was started before `install.bat` finished, or the launcher was reset by a game update. Run `status.bat`, then `install.bat`. |
 | `uninstall.bat` of v5 said `nothing to change` | ZombieBuddy's installer rewrites `ProjectZomboid64.json` with the classpath on one line, which v5 could not edit. Use the `uninstall.bat` of v6. |
@@ -294,6 +295,7 @@ MIT – see `LICENSE`. Project Zomboid is a trademark of The Indie Stone; this p
 - v6: ตัวละครหันหัวมองซอมบี้ที่มองเห็น ซอมบี้ที่ไล่เราหันมามอง ยืนนิ่งครบ 2 นาทีตัวละครเงยหน้ามองกล้อง (แค่ภาพ ไม่เปลี่ยนการมองเห็นในเกม)
 - v6: ส่วนนิ่มกระเพื่อม ท้อง หน้าอก ก้น กระเป๋าหลัง การหายใจ การสั่นตอนโดนตี และกระโปรงคลุมตักตอนนั่ง
 - v6.5: กระเป๋า เป้ กระติกน้ำ chest rig และเกราะ ไม่เด้งตามเนื้อแล้ว (แกว่งของมันเอง) เกราะลำตัวกับ chest rig รัดอกและพุงให้เด้งน้อยลง (ต้องใช้ mod 0.3.6 ขึ้นไป)
+- v6.6: ใช้กับเกม 42.22.2 ได้ (เกมรุ่นนี้เซ็นไฟล์ jar รุ่นเก่าของ patch ทำให้เกมปิดตอนเริ่ม), ใส่แค่ชุดชั้นใน หน้าอกกับก้นเด้งน้อยลง และแจ็กเก็ตกับเสื้อโค้ตของ mod เสื้อผ้าบางตัวนับเป็นเสื้อผ้าแล้ว
 - v5: ซ่อนแขน/ขาที่ขาดให้ mod ตัวเลือก Zombie Dismemberment
 
 **ใช้ ZombieBuddy อยู่แล้ว?** ไม่ต้องโหลดตัวนี้ ใน Workshop item มี **Real Body Shape - zombie patch through ZombieBuddy** เปิดใน mod list ได้เลย ถ้าลงทั้งสองแบบ จะใช้ตัว ZombieBuddy
@@ -311,7 +313,7 @@ MIT – see `LICENSE`. Project Zomboid is a trademark of The Indie Stone; this p
    ถ้าขึ้น `Project Zomboid folder not found` ให้เปิด cmd แล้วรัน `install.bat "D:\...\steamapps\common\ProjectZomboid"`
    อัปเดตจากเวอร์ชันเก่า: รัน `install.bat` ตัวใหม่ได้เลย มันแทนของเดิมให้
 4. เปิดเกม → Mods → เปิดทั้ง Real Body Shape และ Real Body Shape - Zombie Bodies (จะเปิด Zombie Dismemberment ด้วยก็ได้) → โหลดเซฟ
-5. เช็คใน `%USERPROFILE%\Zomboid\console.txt` ต้องมี `[RBS hook] ready (classpath) v6.5 ...` และ `[RealBodyShape] zombie bodies: patch active`
+5. เช็คใน `%USERPROFILE%\Zomboid\console.txt` ต้องมี `[RBS hook] ready (classpath) v6.6 ...` และ `[RealBodyShape] zombie bodies: patch active`
 
 สิ่งที่ถูกแก้ในเครื่อง: สร้าง `%USERPROFILE%\Zomboid\RealBodyShape\rbs_patch.jar` (สร้างจาก `projectzomboid.jar` ของคุณเอง)
 และเติม 1 รายการหน้า `"classpath"` ใน `ProjectZomboid64.json` ของเกม (สำรองไฟล์เดิมเป็น `.rbs_backup`) ไม่แตะไฟล์อื่นของเกมเลย
@@ -335,6 +337,7 @@ Steam จะเขียน `ProjectZomboid64.json` ทับ แพตช์ห
 ถ้าเคยใช้ `uninstall.bat` ของ v5 แล้วขึ้น `nothing to change` (installer ของ ZombieBuddy เขียน json ใหม่เป็นบรรทัดเดียว) ให้ใช้ตัวของ v6
 
 ## ปัญหาที่พบบ่อย
+- เกมปิดทันทีตอนเริ่ม และ `console.txt` มีคำว่า signer information → patch เก่ากว่า v6.6 ใช้กับเกม 42.22.2 ไม่ได้ ให้รัน `install.bat` จาก v6.6 หรือลบโฟลเดอร์ `Zomboid\RealBodyShape` ในโฟลเดอร์ผู้ใช้เพื่อเล่นแบบไม่มี patch
 - เกมเปิดไม่ขึ้นหลังติดตั้ง → `uninstall.bat` แล้วส่ง `console.txt` มาแจ้ง
 - `jiggle: shader RBSJiggle not found` → mod Real Body Shape เก่ากว่า 0.3.4 ให้อัปเดต
 - `WARNING model script RBS_Zombie... not found` → ยังไม่ได้เปิด mod Real Body Shape - Zombie Bodies

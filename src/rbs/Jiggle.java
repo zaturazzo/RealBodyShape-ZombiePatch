@@ -85,8 +85,8 @@ final class Jiggle {
      *  and hold them - a chest rig can cover the bust like a plate (user, 2026-11-08); no underwear boost
      *  under them either. The buttocks, thighs and arms keep their bounce */
     static final float HOLD = 0.25f;
-    /** bust / buttocks with nothing on them but underwear (or nothing): x1.3 - clothes hold them (user, 2026-11-07) */
-    static final float UNDERWEAR_BOOST = 1.3f;           // 1.5 was a little much (user, 2026-11-07)
+    /** bust / buttocks with nothing on them but underwear (or nothing): x1.1 - clothes hold them (user, 2026-11-09) */
+    static final float UNDERWEAR_BOOST = 1.1f;           // 1.5 and 1.3 were too much (user, 2026-11-07, 2026-11-09)
     static final float[] BUST_MALE = { 0f, 0f, 0.3f, 0.6f };
     /** bags on the back: heavier and looser than flesh. Bounced a little too much in game with 0.16 / 1.0 / 0.7 and hit
      *  the 0.12 limit at once (2026-11-06): more damping, less of it, and a soft limit instead of a hard stop */
@@ -576,11 +576,12 @@ final class Jiggle {
             "tshirt", "shirt", "shortsleeveshirt", "tanktop", "sweater", "sweaterhat", "jacket", "jacket_bulky",
             "jacket_down", "jackethat", "jackethat_bulky", "jacketsuit", "jersey", "fulltop", "fullsuit", "fullsuithead",
             "fullsuitheadscba", "boilersuit", "dress", "longdress", "bathrobe", "fullrobe", "torso1", "torso1legs1",
-            "torsoextra", "torsoextravest", "torsoextravestbullet", "cuirass", "bodycostume", "vesttexture"));
+            "torsoextra", "torsoextravest", "torsoextravestbullet", "cuirass", "bodycostume", "vesttexture",
+            "twjacket", "twtrenchcoat"));       // a clothing mod's own locations: a jacket, a long coat
     static final java.util.Set<String> HIPS = new java.util.HashSet<>(java.util.Arrays.asList(
             "pants", "pants_skinny", "pantsextra", "shortpants", "shortsshort", "skirt", "longskirt", "dress",
             "longdress", "legs1", "legs5", "torso1legs1", "boilersuit", "fullsuit", "fullsuithead", "fullsuitheadscba",
-            "bathrobe", "fullrobe", "bodycostume"));
+            "bathrobe", "fullrobe", "bodycostume", "twtrenchcoat"));
 
     /** {bare chest 1/0, bare hips 1/0, expiry, held 1/0 (torso armour or a chest rig)}: looked at again once a second */
     private static long[] bareOf(Object chr) throws Exception {
