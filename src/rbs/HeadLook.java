@@ -440,14 +440,39 @@ final class HeadLook {
             else if (x.endsWith("_r_upperarm")) k.rArm = i;
         }
         if (k.neck >= 0 && k.head >= 0 && k.lArm >= 0 && k.rArm >= 0) {
-            k.neckTree = tree(parent, k.neck);
+            // The clavicles hang on the neck (3ds Max biped), so the neck's whole tree swung both arms with the head,
+            // while a held weapon - drawn at Bip01_Prop1/2, children of Bip01, not of the hands - stayed where the
+            // animation put it: the axe floated out of the hand (user, 2026-11-10). The neck turn leaves the arms.
+            k.neckTree = without(tree(parent, k.neck), tree(parent, childOnPath(parent, k.lArm, k.neck)),
+                    tree(parent, childOnPath(parent, k.rArm, k.neck)));
             k.headTree = tree(parent, k.head);
             k.ok = k.headTree.length > 0 && k.neckTree.length > k.headTree.length;
         }
         if (diag++ < 4) RBSHook.log("head look: skeleton with " + n + " bones" + (k.ok
-                ? ", neck turns " + k.neckTree.length + " bone(s), head " + k.headTree.length : " - skipped (no neck / head / arms)"));
+                ? ", neck turns " + k.neckTree.length + " bone(s) (not the arms), head " + k.headTree.length : " - skipped (no neck / head / arms)"));
         skels.put(data, k);
         return k;
+    }
+
+    /** the bone on the way up from 'bone' whose parent is 'top' (an upper arm's clavicle under the neck), else 'bone' */
+    private static int childOnPath(int[] parent, int bone, int top) {
+        int j = bone;
+        for (int guard = 0; j >= 0 && guard < 64; guard++) {
+            if (parent[j] == top) return j;
+            j = parent[j];
+        }
+        return bone;
+    }
+
+    /** 'all' without the bones in 'drop' */
+    private static int[] without(int[] all, int[]... drop) {
+        List<Integer> out = new ArrayList<>();
+        outer:
+        for (int i : all) {
+            for (int[] d : drop) for (int x : d) if (x == i) continue outer;
+            out.add(i);
+        }
+        return out.stream().mapToInt(Integer::intValue).toArray();
     }
 
     private static int[] tree(int[] parent, int root) {

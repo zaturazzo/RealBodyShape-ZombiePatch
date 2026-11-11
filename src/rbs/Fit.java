@@ -61,8 +61,29 @@ final class Fit {
         }
         if (bodyData == null) return;                          // body still loading: cannot tell it from clothes yet
         int key = (Integer) z[1];
-        float[][] maps = mapsFor(data, key);
+        if (!ensureLayout(t)) return;
+        PlayerFit.refresh();                                   // the mod's skip list and the models it has data for
+        String path = MeshInfo.path(player, data);
+        if (PlayerFit.skipped(path) || PlayerFit.skipped(plain(path))) return;
+        float[][] maps = mapsFor(player, data, key, path);
         if (maps == null) return;
+        if (applyMaps(t, maps)) summary();
+    }
+
+    /** the skin matrix layout, found from this transforms array if not known yet (MeshSpace needs it before any map) */
+    static boolean ensureLayout(Object t) throws Exception {
+        if (layout != 0) return true;
+        if (!ready) init();
+        if (failed) return false;
+        for (Object m : (Object[]) t) {
+            if (m != null && layoutOf(read(m)) != 0) return true;
+        }
+        return false;
+    }
+
+    /** multiplies maps[i] (bind-space affine, 12 floats) into skin matrix i of the transforms array t, once per pose:
+     *  matrices still holding what was written last time are left alone. Also used for the player (PlayerFit) */
+    static boolean applyMaps(Object t, float[][] maps) throws Exception {
         Object[] tr = (Object[]) t;
         int n = Math.min(tr.length, maps.length);
         boolean wrote = false;
@@ -83,7 +104,7 @@ final class Fit {
                 wrote = true;
             }
         }
-        if (wrote) summary();
+        return wrote;
     }
 
     /** {variant body model, sex*4+variant} of a zombie (live or corpse in the atlas) whose body is not Normal, else null */
@@ -121,7 +142,12 @@ final class Fit {
     // ---------------- per mesh: which matrix gets which map ----------------
 
     @SuppressWarnings("unchecked")
-    private static float[][] mapsFor(Object data, int key) throws Exception {
+    /** a zombie's clean copy of a game model (RBSClean/...) under the game's own name */
+    private static String plain(String path) {
+        return path != null && path.startsWith("rbsclean/") ? path.substring(9) : path;
+    }
+
+    private static float[][] mapsFor(Object player, Object data, int key, String path) throws Exception {
         float[][][] all = perMesh.get(data);
         if (all == null) {
             all = new float[8][][];
@@ -156,8 +182,17 @@ final class Fit {
                 any = true;
             }
         }
-        all[key] = any ? m : new float[0][];
-        return any ? m : null;
+        if (!any) {
+            all[key] = new float[0][];
+            return null;
+        }
+        // a mod's mesh in a space of its own (FBX scaled x100...); the size guard only for pieces without the mod's data
+        // (some of the game's pads have boxes reaching far off the body and always fitted fine)
+        boolean ours = path == null || PlayerFit.known(plain(path));
+        m = MeshSpace.convert(player, data, m, "clothes: " + path, ours ? null : MeshInfo.box(player, data));
+        if (m == null) return null;                              // not yet: try again next time
+        all[key] = m;
+        return m.length == 0 ? null : m;
     }
 
     // ---------------- matrices ----------------
@@ -182,6 +217,11 @@ final class Fit {
             if (lay == 1) out[12 + r] = tv; else out[r * 4 + 3] = tv;
         }
         return out;
+    }
+
+    /** 0 = not known yet (no skin matrix seen), 1 = translation in m30..m32, 2 = in m03..m23 */
+    static int layout() {
+        return layout;
     }
 
     /** decided once from a matrix with a clear translation (the same test Limbs uses per matrix) */
@@ -224,6 +264,12 @@ final class Fit {
     }
 
     // ---------------- setup ----------------
+
+    /** the matrix access is set up (PlayerFit uses it without the zombie side being on) */
+    static boolean ensureReady() {
+        if (!ready && !failed) init();
+        return ready;
+    }
 
     private static synchronized void init() {
         if (ready || failed) return;

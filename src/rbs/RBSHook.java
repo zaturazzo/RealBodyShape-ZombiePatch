@@ -144,6 +144,7 @@ public final class RBSHook {
         } catch (Throwable e) {
             warn("zombie clothes failed: " + e);
         }
+        PlayerFit.apply(player, data, t);                     // catches its own errors
         try {
             Limbs.apply(player, data, t);
         } catch (Throwable e) {
@@ -463,7 +464,37 @@ public final class RBSHook {
             return null;
         }
         keptBody.remove(chr);
-        return variantModel(female, visualHash(visual));
+        int v = variant(visualHash(visual));
+        Object m = variantModelOf(female, v);
+        if (m != null) tagVariant(chr, v);
+        return m;
+    }
+
+    private static volatile Method chrModData, tRawget, tRawset;
+    private static volatile boolean tagFailed;
+
+    /**
+     * The zombie's body for Lua: ModData RBS_BodyVariant = index of NAMES (0 thin .. 3 obese). The mod's Lua reads it,
+     * e.g. so a clothing size mod gives a fat zombie big clothes instead of a random size (user, 2026-11-11: a big
+     * zombie in XS, a small one in XXL). Written only when it changes.
+     */
+    private static void tagVariant(Object chr, int v) {
+        if (tagFailed) return;
+        try {
+            if (tRawset == null) {
+                Class<?> kt = Class.forName("se.krka.kahlua.vm.KahluaTable", false, RBSHook.class.getClassLoader());
+                tRawget = kt.getMethod("rawget", Object.class);
+                tRawset = kt.getMethod("rawset", Object.class, Object.class);
+                chrModData = Class.forName("zombie.iso.IsoObject", false, RBSHook.class.getClassLoader()).getMethod("getModData");
+            }
+            Object t = chrModData.invoke(chr);
+            if (t == null) return;
+            Double val = (double) v;
+            if (!val.equals(tRawget.invoke(t, "RBS_BodyVariant"))) tRawset.invoke(t, "RBS_BodyVariant", val);
+        } catch (Throwable e) {
+            tagFailed = true;
+            warn("zombie body tag for Lua failed (sizes of other mods keep their own): " + e);
+        }
     }
 
     /** the game's shared vanilla body (also what a body replacer's files load into), not a model another mod chose */

@@ -386,6 +386,10 @@ final class Jiggle {
             Object[] out = pad.out;
             System.arraycopy(tr, 0, out, 0, tr.length);
             State s = enabled ? states.get(player) : null;
+            // a mesh in a space of its own (another mod's FBX, x100, Z up): the shader's rows are in the game's space and
+            // threw its sleeves about (user, 2026-11-11) - they are converted to its space, so it bounces like the rest
+            float[] space = s != null && s.on && data != null && data != s.bodyData && Fit.ensureReady() && Fit.ensureLayout(t)
+                    ? MeshSpace.meshToGame(player, data) : null;
             if (s == null || !s.on) {
                 out[SLOT] = zero;
                 if (tr.length <= SLOT2) out[SLOT2] = identity;
@@ -398,7 +402,7 @@ final class Jiggle {
                 write(pad.slot, r59);
                 if (sitLogs++ == 0) RBSHook.log("jiggle: sitting - the web between the thighs folds away (body mesh recognised)");
             } else {
-                write(pad.slot, s.rows);
+                write(pad.slot, space == null ? s.rows : MeshSpace.jiggleRows59(s.rows, space));
             }
             out[SLOT] = pad.slot;
             if (tr.length <= SLOT2) {                           // the extras, with this mesh's own bone numbers
@@ -409,7 +413,7 @@ final class Jiggle {
                 r[13] = b[2];
                 r[14] = b[3];
                 r[15] = b[4];
-                write(pad.slot2, r);
+                write(pad.slot2, space == null ? r : MeshSpace.jiggleRows58(r, space));
                 out[SLOT2] = pad.slot2;
             }
             return out;

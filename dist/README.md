@@ -1,4 +1,4 @@
-# Real Body Shape – patch v6.6 (Project Zomboid Build 42, Windows)
+# Real Body Shape – patch v6.7 (Project Zomboid Build 42, Windows)
 
 Unofficial companion for the Steam Workshop item **Real Body Shape** (id 3830730496, version 0.3.4 or newer; 0.3.6 for stiff bags and armour), which
 contains four mods: *Real Body Shape*, *Real Body Shape - Zombie Bodies*, *Real Body Shape - Zombie Dismemberment*
@@ -12,6 +12,8 @@ and *Real Body Shape - zombie patch through ZombieBuddy*.
   fixed per zombie, instead of copying the player's shape; their clothes follow that body.
 - Zombie Dismemberment (optional): a few percent of zombies are missing a hand, forearm, arm or leg (legless ones
   crawl), clothes included, corpses too.
+- Other mods' clothes (v6.7, needs Real Body Shape 0.3.8 and its optional mod Real Body Shape - Other Mods' Clothes): 3D clothes
+  the mod has no data for grow and shrink with your character too, roughly.
 
 **Using ZombieBuddy?** You do not need this zip: enable *Real Body Shape - zombie patch through ZombieBuddy* in the
 mod list instead. With both installed, the ZombieBuddy one is used.
@@ -26,7 +28,7 @@ Full manual, troubleshooting and source code: https://github.com/zaturazzo/RealB
    `install.bat "D:\path\to\steamapps\common\ProjectZomboid"`. Updating from an older version: just run it, it
    replaces the old entry.
 3. Start the game, enable *Real Body Shape* and *Real Body Shape - Zombie Bodies* (plus *Zombie Dismemberment* if you
-   want), load your save. `%USERPROFILE%\Zomboid\console.txt` should contain `[RBS hook] ready (classpath) v6.6 ...` and
+   want), load your save. `%USERPROFILE%\Zomboid\console.txt` should contain `[RBS hook] ready (classpath) v6.7 ...` and
    `[RealBodyShape] zombie bodies: patch active (classpath), Zombie Bodies mod on`.
 
 - `status.bat` – what is installed, and whether the patch still matches the game version.

@@ -16,6 +16,8 @@ this patch adds them:
   bounce like the body, and chest armour and chest rigs hold the bust and the belly.
 - **Missing limbs (v5):** hands, forearms, arms and legs really go missing for the optional *Zombie Dismemberment*
   mod.
+- **Other mods' clothes (v6.7):** with the optional mod *Real Body Shape - Other Mods' Clothes* on, 3D clothes the mod has no data
+  for (most often from clothing mods) grow and shrink with your character too, roughly.
 
 > **Using ZombieBuddy?** You do not need this download. The Workshop item contains the same patch as a ZombieBuddy
 > Java mod: enable **Real Body Shape - zombie patch through ZombieBuddy** in the mod list and you are done
@@ -25,6 +27,7 @@ this patch adds them:
 |---|---|---|
 | Player body follows weight, diet, exercise | yes | yes |
 | Vanilla 3D clothes, shoes, bags follow the body | yes | yes |
+| Other mods' 3D clothes (no data in the mod) | keep their size | follow the body roughly (v6.7, mod 0.3.8+, the optional mod Real Body Shape - Other Mods' Clothes on) |
 | Women's floor-sitting poses | yes | yes, and skirts lie over the lap |
 | Head look | no | your character looks at zombies in sight; zombies chasing you look back |
 | Soft body physics | no | bellies, bust, buttocks, backpacks, breathing, hits |
@@ -89,7 +92,7 @@ this patch adds them:
 
 Open `%USERPROFILE%\Zomboid\console.txt` after loading a save and look for:
 ```
-[RBS hook] ready (classpath) v6.6 - zombies and corpses use RBS_Zombie*_{Thin,Normal,Fat,Obese} model scripts; game classes match the patch source
+[RBS hook] ready (classpath) v6.7 - zombies and corpses use RBS_Zombie*_{Thin,Normal,Fat,Obese} model scripts; game classes match the patch source
 [RBS hook] config: enabled=true thin/normal/fat/obese=15/55/22/8
 [RBS hook] jiggle config: enabled=true strength=50% players=true (from 82 kg) bust=60% bags=100% limbs=100% breathing=100% hits=100% buttocks=100% underwear only x1.30
 [RBS hook] height config: enabled=true spread=+/-15.0%
@@ -125,6 +128,10 @@ RealBodyShape.JIGGLE = { enabled = true, strength = 50, players = true, player_f
 -- head look: range in tiles; zombies = zombies chasing you look at you;
 -- idle = seconds standing still before your character looks at the camera (0 = off)
 RealBodyShape.LOOK = { enabled = true, range = 8, zombies = true, idle = 120 }
+-- 3D clothes the mod has no data for (other mods' clothes): follow the body roughly while the optional mod
+-- Real Body Shape - Other Mods' Clothes is on (enabled = false switches it off anyway); skip = models never stretched,
+-- on the player or on zombies: a file name or the end of its path, as the console names it ("rough fit: <path>: ...")
+RealBodyShape.ROUGH = { enabled = true, skip = {} }
 ```
 
 Each zombie's variant and height are derived from how it looks (skin, body hair, hair, beard, hair colour - the
@@ -137,11 +144,26 @@ save.
 - Looks down at crawlers. While aiming a gun your character watches the zombie in the line of fire, with a melee
   weapon raised a wider arc, and still glances at a zombie close beside them. Hair, hats and glasses turn with the
   head.
+- Only the neck and head turn: the arms stay with the body, so a weapon stays in your hands (since v6.7).
 - The head is left to the game in vehicles, asleep, climbing, lying down and when the game turns it itself.
 - Looks only: what your character can see in the game does not change.
 - Zombies that are chasing you turn their heads to you; the ones that have not noticed you don't.
 - Standing still for two minutes (not walking, turning, aiming, sitting or doing an action, no zombie in sight),
   your character looks up at the camera. Any move hands the head back. Facing away from the camera, they don't turn.
+
+### Other mods' clothes (v6.7)
+- Turn on the optional mod *Real Body Shape - Other Mods' Clothes (needs the patch)* in the mod list.
+- Real Body Shape reshapes the game's 3D clothes, and the ones it has data for, piece by piece. Others (most often
+  from clothing mods) used to keep their original size on a fat or thin character. With the patch they follow the
+  body roughly: the part of a piece on each bone is stretched or shrunk like the body around that bone.
+- It is an approximation: a piece can sit a little loose or a little tight in places, and on a very heavy character
+  a bit of skin can show at the crotch or the inner thighs.
+- Your character only, and only on the game's body (not on another mod's body, e.g. a child's). Hair, beards and
+  bags carried in the hand stay as they are. Pieces the mod has data for are left to the mod.
+- Needs Real Body Shape 0.3.8 or newer: it tells the patch your shape and which pieces it has data for.
+- A piece in its own space (a model file a hundred times smaller, another up axis) is converted to the game's, for
+  zombies' clothes too. A piece rigged unlike the game's skeleton, or one without data that reaches more than about
+  55 cm beyond the body (wings, capes, big props), is left as it is; the console says which and why.
 
 ## 4b. Dismembered zombies (optional, patch v5 or newer)
 
@@ -228,6 +250,12 @@ restore `ProjectZomboid64.json.rbs_backup` by hand.
   too, to tell `Clean` the clothes belong to a zombie. On top of the copies, `rbs.Fit` multiplies a per-bone
   bind-space map (Normal body -> the zombie's variant) into the skin matrices of every non-body mesh, so the
   clothes follow thin / fat / obese bodies.
+- **Other mods' clothes on the player (v6.7):** `rbs.PlayerFit` does for the player what `Fit` does for zombies,
+  from tables fitted offline per shape parameter (`PlayerFitTable`: fat, thin, belly, chest, arms, legs, bust, hips,
+  waist), mixed with the shape the mod last built the body for (`RealBodyShape_built.txt`). A piece is recognised
+  by its model path (`ModelMesh.getPath()`); the mod lists the models it has data for in `RealBodyShape_fit.txt`
+  (written at every game start; an older file means the mod is off and nothing is done), and those, hair, beards
+  and bags carried in the hand are left alone.
 - **Heights (v6):** `rbs.Height` works on the model-space bone matrices right after
   `AnimationPlayer.UpdateSkinTransforms()` (and `transformRootChildBones`, which rebuilds them on a turn-around).
   Not a scale of the whole model: the legs, trunk, neck and arms get longer or shorter, the head, hands and feet keep
@@ -296,6 +324,8 @@ MIT – see `LICENSE`. Project Zomboid is a trademark of The Indie Stone; this p
 - v6: ส่วนนิ่มกระเพื่อม ท้อง หน้าอก ก้น กระเป๋าหลัง การหายใจ การสั่นตอนโดนตี และกระโปรงคลุมตักตอนนั่ง
 - v6.5: กระเป๋า เป้ กระติกน้ำ chest rig และเกราะ ไม่เด้งตามเนื้อแล้ว (แกว่งของมันเอง) เกราะลำตัวกับ chest rig รัดอกและพุงให้เด้งน้อยลง (ต้องใช้ mod 0.3.6 ขึ้นไป)
 - v6.6: ใช้กับเกม 42.22.2 ได้ (เกมรุ่นนี้เซ็นไฟล์ jar รุ่นเก่าของ patch ทำให้เกมปิดตอนเริ่ม), ใส่แค่ชุดชั้นใน หน้าอกกับก้นเด้งน้อยลง และแจ็กเก็ตกับเสื้อโค้ตของ mod เสื้อผ้าบางตัวนับเป็นเสื้อผ้าแล้ว
+- v6.7: ตอนถืออาวุธแล้วหัวหันไปหาซอมบี้ มือไม่หลุดจากอาวุธแล้ว (เดิมแขนหมุนตามคอ ขวานเหมือนลอยออกจากมือ)
+- v6.7: เสื้อผ้า 3D ที่ mod ไม่มีข้อมูล (ส่วนใหญ่มาจาก mod เสื้อผ้าอื่น) อ้วน/ผอมตามตัวละครแบบคร่าวๆ (ต้องใช้ mod 0.3.8 ขึ้นไป และเปิด mod เสริม Real Body Shape - Other Mods' Clothes)
 - v5: ซ่อนแขน/ขาที่ขาดให้ mod ตัวเลือก Zombie Dismemberment
 
 **ใช้ ZombieBuddy อยู่แล้ว?** ไม่ต้องโหลดตัวนี้ ใน Workshop item มี **Real Body Shape - zombie patch through ZombieBuddy** เปิดใน mod list ได้เลย ถ้าลงทั้งสองแบบ จะใช้ตัว ZombieBuddy
@@ -313,7 +343,7 @@ MIT – see `LICENSE`. Project Zomboid is a trademark of The Indie Stone; this p
    ถ้าขึ้น `Project Zomboid folder not found` ให้เปิด cmd แล้วรัน `install.bat "D:\...\steamapps\common\ProjectZomboid"`
    อัปเดตจากเวอร์ชันเก่า: รัน `install.bat` ตัวใหม่ได้เลย มันแทนของเดิมให้
 4. เปิดเกม → Mods → เปิดทั้ง Real Body Shape และ Real Body Shape - Zombie Bodies (จะเปิด Zombie Dismemberment ด้วยก็ได้) → โหลดเซฟ
-5. เช็คใน `%USERPROFILE%\Zomboid\console.txt` ต้องมี `[RBS hook] ready (classpath) v6.6 ...` และ `[RealBodyShape] zombie bodies: patch active`
+5. เช็คใน `%USERPROFILE%\Zomboid\console.txt` ต้องมี `[RBS hook] ready (classpath) v6.7 ...` และ `[RealBodyShape] zombie bodies: patch active`
 
 สิ่งที่ถูกแก้ในเครื่อง: สร้าง `%USERPROFILE%\Zomboid\RealBodyShape\rbs_patch.jar` (สร้างจาก `projectzomboid.jar` ของคุณเอง)
 และเติม 1 รายการหน้า `"classpath"` ใน `ProjectZomboid64.json` ของเกม (สำรองไฟล์เดิมเป็น `.rbs_backup`) ไม่แตะไฟล์อื่นของเกมเลย
