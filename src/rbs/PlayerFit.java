@@ -51,7 +51,7 @@ final class PlayerFit {
     private static final Map<Object, Object[]> pieces = Collections.synchronizedMap(new WeakHashMap<>());
     /** SkinningData -> {Integer version*2+sex, float[][] maps by matrix index or null} */
     private static final Map<Object, Object[]> mapsCache = Collections.synchronizedMap(new WeakHashMap<>());
-    private static int logs, fitted, errors;
+    private static int logs, fitted, errors, pieceErrors;
     private static long summaryAt;
 
     private PlayerFit() {}
@@ -88,7 +88,24 @@ final class PlayerFit {
         if (bodyData == null || bodyData == data) return;      // still loading, or the body itself (it has the shape)
         if (!rough(player, data)) return;
         if (!Fit.ensureReady() || !Fit.ensureLayout(t)) return;
-        float[][] maps = mapsFor(player, data, female ? 0 : 1);
+        float[][] maps;
+        try {
+            maps = mapsFor(player, data, female ? 0 : 1);
+        } catch (Throwable e) {
+            // this piece stays as it is (until the mod's files change), the others go on: one odd piece of another
+            // mod must not count towards switching the whole rough fit off
+            pieces.put(data, new Object[]{ 0, Long.MAX_VALUE });
+            if (pieceErrors++ < 10) {
+                String what;
+                try {
+                    what = MeshInfo.path(player, data);
+                } catch (Throwable ignored) {
+                    what = "a piece";
+                }
+                RBSHook.warn("rough fit: " + what + ": " + e + " - left as it is");
+            }
+            return;
+        }
         if (maps == null) return;
         if (Fit.applyMaps(t, maps)) summary();
     }

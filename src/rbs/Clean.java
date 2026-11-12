@@ -59,9 +59,9 @@ final class Clean {
     /** the mesh name to load for this character: the untouched copy for a zombie when there is one, else as given */
     static Object meshFor(Object mesh, Object chr) throws Exception {
         if (failed || !(mesh instanceof String)) return mesh;
-        if (!RBSHook.zombiesEnabled()) return mesh;
-        boolean zombie = isZombieWearer(chr);
-        if (!zombie) return mesh;
+        // a zombie, or another player in multiplayer (the reshaped files are this machine's own player's shape)
+        boolean zombie = RBSHook.zombiesEnabled() && isZombieWearer(chr);
+        if (!zombie && !Others.wearsVariant(chr)) return mesh;
         if (!ready) init();
         if (failed) return mesh;
         String name = (String) mesh;

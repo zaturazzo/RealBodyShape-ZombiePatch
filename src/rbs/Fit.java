@@ -35,7 +35,7 @@ final class Fit {
     private static final Object NONE = new Object();
     /** 0 = not known yet, 1 = translation in m30..m32 (column vectors), 2 = translation in m03..m23 */
     private static volatile int layout;
-    private static int diag, fitted;
+    private static int diag, fitted, errors, pieceErrors;
     private static volatile boolean bodySeen;
     private static long summaryAt;
 
@@ -43,9 +43,22 @@ final class Fit {
 
     // ---------------- hook (called from RBSHook.skinTransforms before Limbs) ----------------
 
-    static void apply(Object player, Object data, Object t) throws Exception {
+    /** errors are caught here: one piece that fails is left as the game made it (the others go on), and errors that
+     *  keep coming (not one piece's) switch the zombie clothes off for this session instead of failing every frame */
+    static void apply(Object player, Object data, Object t) {
         if (failed || data == null || t == null) return;
-        if (!RBSHook.zombiesEnabled()) return;
+        try {
+            fit(player, data, t);
+        } catch (Throwable e) {
+            if (++errors >= 30) {
+                failed = true;
+                RBSHook.warn("zombie clothes switched off after repeated errors, they stay as the game made them: " + e);
+            } else if (errors == 1) RBSHook.warn("zombie clothes: " + e);
+        }
+    }
+
+    private static void fit(Object player, Object data, Object t) throws Exception {
+        if (!RBSHook.zombiesEnabled() && !RBSHook.othersEnabled()) return;
         if (!ready) init();
         if (failed) return;
         Object[] z = zombieOf(player);
@@ -65,9 +78,26 @@ final class Fit {
         PlayerFit.refresh();                                   // the mod's skip list and the models it has data for
         String path = MeshInfo.path(player, data);
         if (PlayerFit.skipped(path) || PlayerFit.skipped(plain(path))) return;
-        float[][] maps = mapsFor(player, data, key, path);
+        float[][] maps;
+        try {
+            maps = mapsFor(player, data, key, path);
+        } catch (Throwable e) {
+            leave(data, key);                                  // this piece stays as the game made it, the others go on
+            if (pieceErrors++ < 10) RBSHook.warn("clothes: " + path + ": " + e + " - left as it is");
+            return;
+        }
         if (maps == null) return;
         if (applyMaps(t, maps)) summary();
+    }
+
+    /** a piece whose maps could not be worked out: never tried again for this body */
+    private static void leave(Object data, int key) {
+        float[][][] all = perMesh.get(data);
+        if (all == null) {
+            all = new float[8][][];
+            perMesh.put(data, all);
+        }
+        all[key] = new float[0][];
     }
 
     /** the skin matrix layout, found from this transforms array if not known yet (MeshSpace needs it before any map) */
@@ -115,10 +145,15 @@ final class Fit {
             Object[] e = byChar.get(chr);
             if (e != null && now < (Long) e[2]) return e[0] == NONE ? null : e;
             Object[] r = null;
-            if (RBSHook.isLiveZombie(chr) && RBSHook.wearsVariant(chr)) r = describe(RBSHook.visualOf(chr));
+            if (RBSHook.isLiveZombie(chr)) {
+                if (RBSHook.zombiesEnabled() && RBSHook.wearsVariant(chr)) r = describe(RBSHook.visualOf(chr));
+            } else if (Others.wearsVariant(chr)) {
+                r = describe(Others.isFemale(chr), Others.variant(chr), "player");
+            }
             byChar.put(chr, r == null ? new Object[]{ NONE, 0, now + 2_000_000_000L } : new Object[]{ r[0], r[1], now + 2_000_000_000L });
             return r;
         }
+        if (!RBSHook.zombiesEnabled()) return null;
         Object visual = Limbs.animatedVisual(player);
         if (visual == null || !RBSHook.isZombieVisual(visual) || !RBSHook.wearsVariant(visual)) return null;
         return describe(visual);
@@ -126,15 +161,17 @@ final class Fit {
 
     private static Object[] describe(Object visual) throws Exception {
         if (visual == null) return null;
-        boolean female = RBSHook.isFemaleVisual(visual);
-        int v = RBSHook.variantOf(visual);
+        return describe(RBSHook.isFemaleVisual(visual), RBSHook.variantOf(visual), "zombie");
+    }
+
+    private static Object[] describe(boolean female, int v, String who) throws Exception {
         if (v == 1) return null;                              // Normal: vanilla clothes fit already
         Object model = RBSHook.variantModelOf(female, v);
-        if (model == null) return null;                       // Zombie Bodies mod off: the zombie keeps the game's body
+        if (model == null) return null;                       // Zombie Bodies mod off: the game's body
         int key = (female ? 0 : 4) + v;
         if (diag < 8) {
             diag++;
-            RBSHook.log("clothes: " + (female ? "female " : "male ") + RBSHook.NAMES[v] + " zombie - its clothes follow the body");
+            RBSHook.log("clothes: " + (female ? "female " : "male ") + RBSHook.NAMES[v] + " " + who + " - its clothes follow the body");
         }
         return new Object[]{ model, key };
     }
@@ -216,7 +253,7 @@ final class Fit {
             float tv = L[r][0] * a[3] + L[r][1] * a[7] + L[r][2] * a[11] + T[r];
             if (lay == 1) out[12 + r] = tv; else out[r * 4 + 3] = tv;
         }
-        return out;
+        return MeshSpace.finite(out) ? out : null;             // never a NaN / infinity into the game's matrices
     }
 
     /** 0 = not known yet (no skin matrix seen), 1 = translation in m30..m32, 2 = in m03..m23 */

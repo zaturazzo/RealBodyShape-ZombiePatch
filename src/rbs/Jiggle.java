@@ -445,8 +445,9 @@ final class Jiggle {
         return b;
     }
 
-    /** {kind, variant, female, expiry}: kind -1 not human, 0 other human (mannequin, corpse, preview), 1 zombie, 2 player;
-     *  variant -1: a zombie whose body another mod picked (nothing soft) */
+    /** {kind, variant, female, expiry}: kind -1 not human, 0 other human (mannequin, corpse, preview), 1 zombie, 2 player,
+     *  3 another player in multiplayer on a variant body (Others); variant -1: a zombie whose body another mod picked
+     *  (nothing soft) */
     private static long[] whoOf(Object player) throws Exception {
         Object chr = apCharacter.invoke(player);
         Object key = chr != null ? chr : player;
@@ -462,6 +463,10 @@ final class Jiggle {
                     r[1] = RBSHook.wearsVariant(chr) ? RBSHook.variantOf(v) : -1;    // another mod's body: nothing soft
                     r[2] = RBSHook.isFemaleVisual(v) ? 1 : 0;
                 } else r[0] = 0;
+            } else if (Others.wearsVariant(chr)) {               // another player in multiplayer, on a variant body
+                r[0] = 3;
+                r[1] = Others.variant(chr);
+                r[2] = Others.isFemale(chr) ? 1 : 0;
             } else if (!(Boolean) chrAnimal.invoke(chr)) {
                 r[0] = playerClass.isInstance(chr) ? 2 : 0;
                 r[2] = (Boolean) chrFemale.invoke(chr) ? 1 : 0;
@@ -504,6 +509,21 @@ final class Jiggle {
                 } else if (female && b[0] == 1) bust *= underwearBoost;
                 if (female) butt = BUTT_PLAYER * buttPct * buttWeight(chr) * (b[1] == 1 ? underwearBoost : 1f);
                 model = fieldOf(female ? fFemaleBody : fMaleBody);
+            } else if (z[0] == 3 && players) {
+                // another player: their weight as their machine sent it (this machine does not know their stats),
+                // the variant body they draw here; no breathing (their tiredness is not known here)
+                int var = (int) z[1];
+                float kg = Others.weight(chr);
+                if (kg <= 0) kg = VARIANT_KG[var];
+                gain = gainForKg(kg);
+                bust = female ? BUST_PLAYER : gain * BUST_MALE_PLAYER;
+                long[] b = bareOf(chr);
+                if (b[3] == 1) {
+                    bust *= HOLD;
+                    bellyHold = HOLD;
+                } else if (female && b[0] == 1) bust *= underwearBoost;
+                if (female) butt = BUTT_PLAYER * buttPct * buttForKg(kg) * (b[1] == 1 ? underwearBoost : 1f);
+                model = RBSHook.variantModelOf(female, var);
             } else {
                 State old = states.get(player);
                 if (old != null) old.on = false;
@@ -558,7 +578,13 @@ final class Jiggle {
     private static float playerGain(Object chr) throws Exception {
         Object nut = chrNutrition.invoke(chr);
         if (nut == null) return 0f;
-        float kg = (float) ((Number) nutWeight.invoke(nut)).doubleValue();
+        return gainForKg((float) ((Number) nutWeight.invoke(nut)).doubleValue());
+    }
+
+    /** the weights the variant bodies were built for (export_zombies.VARIANTS) */
+    private static final float[] VARIANT_KG = { 52f, 68f, 95f, 125f };
+
+    private static float gainForKg(float kg) {
         float from = Math.min(playerFrom, 94f);
         if (kg <= from) return 0f;
         if (kg <= 95f) return (kg - from) / (95f - from);
@@ -568,7 +594,10 @@ final class Jiggle {
     /** a woman player's buttocks by weight: x0.6 at 50 kg, x1 at 80 kg, x1.3 from 110 kg */
     private static float buttWeight(Object chr) throws Exception {
         Object nut = chrNutrition.invoke(chr);
-        float kg = nut == null ? 80f : (float) ((Number) nutWeight.invoke(nut)).doubleValue();
+        return buttForKg(nut == null ? 80f : (float) ((Number) nutWeight.invoke(nut)).doubleValue());
+    }
+
+    private static float buttForKg(float kg) {
         if (kg <= 80f) return Math.max(0.6f, 0.6f + 0.4f * (kg - 50f) / 30f);
         return Math.min(1.3f, 1f + 0.3f * (kg - 80f) / 30f);
     }

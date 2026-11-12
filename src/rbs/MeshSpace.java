@@ -77,6 +77,7 @@ final class MeshSpace {
             float[] ci = inverse(c);
             if (ci == null) continue;
             out[i] = mul(ci, mul(maps[i], c));
+            if (!finite(out[i])) return reject(what, "its bone " + name + " gives no usable numbers");
             maxScale = Math.max(maxScale, scaleOf(c));
             any = true;
         }
@@ -122,7 +123,7 @@ final class MeshSpace {
                 g = spaceOf(bone, meshNames, animNames, meshOff, animOff, lay);
                 if (g != null) break;
             }
-            boolean game = g == null || sameRig(g, new float[]{ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 });
+            boolean game = g == null || !finite(g) || sameRig(g, new float[]{ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 });
             spaceOfMesh.put(data, game ? NONE : g);
             if (!game && jiggleLogs++ < 12) {
                 RBSHook.log(String.format(java.util.Locale.ROOT, "jiggle: %s is in a space of its own (scale %.3f) - its bounce converted",
@@ -272,6 +273,13 @@ final class MeshSpace {
         o[8] = C * inv; o[9] = -(a * h - b * g) * inv; o[10] = (a * e - b * d) * inv;
         for (int r = 0; r < 3; r++) o[r * 4 + 3] = -(o[r * 4] * m[3] + o[r * 4 + 1] * m[7] + o[r * 4 + 2] * m[11]);
         return o;
+    }
+
+    /** every number is a real one (no NaN, no infinity): a broken bone offset must not reach the game's matrices */
+    static boolean finite(float[] m) {
+        if (m == null) return false;
+        for (float v : m) if (!Float.isFinite(v)) return false;
+        return true;
     }
 
     private static boolean isIdentity(float[] m) {

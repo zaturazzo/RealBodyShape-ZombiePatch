@@ -14,6 +14,8 @@ and *Real Body Shape - zombie patch through ZombieBuddy*.
   crawl), clothes included, corpses too.
 - Other mods' clothes (v6.7, needs Real Body Shape 0.3.8 and its optional mod Real Body Shape - Other Mods' Clothes): 3D clothes
   the mod has no data for grow and shrink with your character too, roughly.
+- Other players in multiplayer (v6.7, needs Real Body Shape 0.3.8 and Zombie Bodies): they get the body nearest
+  their weight (thin / normal / fat / obese), sent through the server, instead of your own shape.
 
 **Using ZombieBuddy?** You do not need this zip: enable *Real Body Shape - zombie patch through ZombieBuddy* in the
 mod list instead. With both installed, the ZombieBuddy one is used.

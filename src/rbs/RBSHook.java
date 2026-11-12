@@ -28,7 +28,7 @@ import java.util.WeakHashMap;
  * makes zombies load untouched copies of the clothes the main mod reshapes for the player. {@link Height} makes
  * each zombie a little taller or shorter through two more hooks on AnimationPlayer, and {@link Jiggle} lets fat
  * zombies' and overweight players' bellies bounce (its own shader for their bodies and clothes, fed through the skin
- * matrix palette).
+ * matrix palette). In multiplayer, the other players get the variant of their weight too ({@link Others}).
  * Everything else, and every failure, falls through to the original methods.
  * Only public game members are used, through reflection, so nothing here depends on game internals.
  */
@@ -49,6 +49,8 @@ public final class RBSHook {
     /** female zombies get variants too; 0 while Hotsco's New Body replaces the female body (it keeps its own) */
     private static volatile boolean females = true;
     private static volatile int[] weights = { 15, 55, 22, 8 };
+    /** other players in multiplayer get the variant body of their weight (Others) */
+    private static volatile boolean others = true;
     private static long cfgMtime = -1, cfgNextCheck;
     private static int logged, keptLogged;
     /**
@@ -102,6 +104,7 @@ public final class RBSHook {
         Object m = null;
         try {
             m = zombieModel(chr, body);
+            if (m == null) m = otherPlayerModel(chr, body);
         } catch (Throwable t) {
             warn("zombie body failed: " + t);
         }
@@ -470,6 +473,34 @@ public final class RBSHook {
         return m;
     }
 
+    /**
+     * Another player in multiplayer: the variant body of their weight (Others), not the shared body this machine
+     * reshapes for its own player. null = leave the game's body (single player, a body another mod chose, Zombie
+     * Bodies off, switched off in the config).
+     */
+    private static Object otherPlayerModel(Object chr, Object orig) throws Exception {
+        if (failed) return null;
+        if (!ready) init();
+        if (failed || !Others.isOther(chr)) return null;
+        loadConfig();
+        if (!others) return null;
+        boolean female = Others.isFemale(chr);
+        if (!isSharedBody(orig) || (female && !females)) {
+            Others.keep(chr, false);
+            return null;
+        }
+        Object m = variantModelOf(female, Others.variant(chr));
+        Others.keep(chr, m != null);
+        return m;
+    }
+
+    /** other players get variant bodies (config players=1, the default) and the hook works */
+    static boolean othersEnabled() {
+        if (!ensureInit()) return false;
+        loadConfig();
+        return others;
+    }
+
     private static volatile Method chrModData, tRawget, tRawset;
     private static volatile boolean tagFailed;
 
@@ -762,7 +793,7 @@ public final class RBSHook {
             if (mt == cfgMtime) return;
             cfgMtime = mt;
             int[] w = weights.clone();
-            boolean en = enabled, fe = true;
+            boolean en = enabled, fe = true, pl = true;
             for (String line : Files.readAllLines(p, StandardCharsets.UTF_8)) {
                 int eq = line.indexOf('=');
                 if (eq < 0) continue;
@@ -775,6 +806,7 @@ public final class RBSHook {
                         case "fat": w[2] = Integer.parseInt(v); break;
                         case "obese": w[3] = Integer.parseInt(v); break;
                         case "female": fe = !(v.equals("0") || v.equalsIgnoreCase("false")); break;
+                        case "players": pl = !(v.equals("0") || v.equalsIgnoreCase("false")); break;
                         default: break;
                     }
                 } catch (NumberFormatException ignored) {}
@@ -782,8 +814,10 @@ public final class RBSHook {
             weights = w;
             enabled = en;
             females = fe;
+            others = pl;
             log("config: enabled=" + en + " thin/normal/fat/obese=" + w[0] + "/" + w[1] + "/" + w[2] + "/" + w[3]
-                    + (fe ? "" : ", female zombies keep the body the game loads"));
+                    + (fe ? "" : ", female zombies keep the body the game loads")
+                    + (pl ? "" : ", other players keep the shared body"));
         } catch (Exception e) {
             warn("config: " + e);
         }

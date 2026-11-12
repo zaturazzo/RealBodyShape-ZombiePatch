@@ -18,6 +18,9 @@ this patch adds them:
   mod.
 - **Other mods' clothes (v6.7):** with the optional mod *Real Body Shape - Other Mods' Clothes* on, 3D clothes the mod has no data
   for (most often from clothing mods) grow and shrink with your character too, roughly.
+- **Other players in multiplayer (v6.7):** each player's weight is passed on through the server, and the other
+  players get the body nearest to it (thin, normal, fat or obese, the zombies' bodies), clothes that follow it and a
+  belly that bounces by their weight. Before, everyone of your sex wore your own shape.
 
 > **Using ZombieBuddy?** You do not need this download. The Workshop item contains the same patch as a ZombieBuddy
 > Java mod: enable **Real Body Shape - zombie patch through ZombieBuddy** in the mod list and you are done
@@ -32,6 +35,7 @@ this patch adds them:
 | Head look | no | your character looks at zombies in sight; zombies chasing you look back |
 | Soft body physics | no | bellies, bust, buttocks, backpacks, breathing, hits |
 | Zombies | copy the player's shape | own shape (4 variants) and height per zombie |
+| Other players (multiplayer) | the same sex as you: your shape | the variant nearest their weight (v6.7, mod 0.3.8+) |
 | Corpses | copy the player's shape | keep the zombie's own shape |
 | Dismembered zombies (optional mod) | blood + crawling only | limbs really missing, clothes included, on corpses too |
 
@@ -46,7 +50,8 @@ this patch adds them:
   ZombieBuddy** (only for ZombieBuddy users, see above). With this download, enable the first two, and the third if
   you want it.
 - **No Java installation needed** – the patch uses the Java runtime that comes with the game (`jre64` folder).
-- Singleplayer. Not tested in multiplayer.
+- Singleplayer, and multiplayer for the other players' bodies (v6.7, see the FAQ). The patch only changes what your
+  own game draws; every player who wants to see it needs it on their PC.
 
 ## 2. Install – step by step
 
@@ -284,8 +289,11 @@ restore `ProjectZomboid64.json.rbs_backup` by hand.
 **ZombieBuddy?** Use the ZombieBuddy mod of the Workshop item instead of this download (see the top of this page).
 Both together are fine: the ZombieBuddy one is used.
 
-**Multiplayer?** Untested. The patch is client-side; a server would still think every zombie has the normal body.
-The head look is shown for your own character only.
+**Multiplayer?** The patch is client-side: it only changes what your own game draws. Since v6.7 (mod 0.3.8+, with
+*Zombie Bodies* on) the other players get the body variant nearest their weight, which their game sends through the
+server whenever it changes by 1 kg; until it arrives they have the normal body. They get one of four bodies, not
+their exact shape (their muscles and style are not shown). `RealBodyShape.ZOMBIES.players = false` switches it off.
+The head look is shown for your own character only, and the server still thinks every zombie has the normal body.
 
 **Linux / macOS?** The launcher scripts differ (`projectzomboid.sh`). The Java part would work; the installer is
 Windows-only for now.
@@ -326,6 +334,7 @@ MIT – see `LICENSE`. Project Zomboid is a trademark of The Indie Stone; this p
 - v6.6: ใช้กับเกม 42.22.2 ได้ (เกมรุ่นนี้เซ็นไฟล์ jar รุ่นเก่าของ patch ทำให้เกมปิดตอนเริ่ม), ใส่แค่ชุดชั้นใน หน้าอกกับก้นเด้งน้อยลง และแจ็กเก็ตกับเสื้อโค้ตของ mod เสื้อผ้าบางตัวนับเป็นเสื้อผ้าแล้ว
 - v6.7: ตอนถืออาวุธแล้วหัวหันไปหาซอมบี้ มือไม่หลุดจากอาวุธแล้ว (เดิมแขนหมุนตามคอ ขวานเหมือนลอยออกจากมือ)
 - v6.7: เสื้อผ้า 3D ที่ mod ไม่มีข้อมูล (ส่วนใหญ่มาจาก mod เสื้อผ้าอื่น) อ้วน/ผอมตามตัวละครแบบคร่าวๆ (ต้องใช้ mod 0.3.8 ขึ้นไป และเปิด mod เสริม Real Body Shape - Other Mods' Clothes)
+- v6.7: เล่นหลายคน ผู้เล่นคนอื่นได้ร่างที่ใกล้น้ำหนักของเขาที่สุด (ผอม / ปกติ / อ้วน / อ้วนมาก แบบเดียวกับซอมบี้) เสื้อผ้าและการเด้งตามร่างนั้น น้ำหนักส่งผ่าน server (เดิมคนเพศเดียวกับเราได้หุ่นของเรา; ต้องใช้ mod 0.3.8 ขึ้นไป และเปิด Zombie Bodies)
 - v5: ซ่อนแขน/ขาที่ขาดให้ mod ตัวเลือก Zombie Dismemberment
 
 **ใช้ ZombieBuddy อยู่แล้ว?** ไม่ต้องโหลดตัวนี้ ใน Workshop item มี **Real Body Shape - zombie patch through ZombieBuddy** เปิดใน mod list ได้เลย ถ้าลงทั้งสองแบบ จะใช้ตัว ZombieBuddy
@@ -375,4 +384,4 @@ Steam จะเขียน `ProjectZomboid64.json` ทับ แพตช์ห
 - ซอมบี้โครงกระดูกไม่เปลี่ยน → ตั้งใจ มันใช้โมเดลของตัวเองอยู่แล้ว
 
 ## ข้อควรรู้
-แพตช์นี้ไม่เป็นทางการ แก้วิธีเปิดเกม (ไม่แก้ไฟล์เกม) ถอดได้ทั้งหมด ไม่แจกโค้ดของเกม ใช้เล่นคนเดียว ใช้ด้วยความเสี่ยงของตัวเอง
+แพตช์นี้ไม่เป็นทางการ แก้วิธีเปิดเกม (ไม่แก้ไฟล์เกม) ถอดได้ทั้งหมด ไม่แจกโค้ดของเกม เปลี่ยนแค่ภาพในเครื่องตัวเอง (เล่นหลายคน: ใครอยากเห็นร่างของคนอื่นต้องลงในเครื่องตัวเอง) ใช้ด้วยความเสี่ยงของตัวเอง
