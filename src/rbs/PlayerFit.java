@@ -39,6 +39,8 @@ final class PlayerFit {
 
     // what the files say
     private static volatile boolean on, femaleOn = true;
+    /** RealBodyShape_HD draws the body (hd=1): add what its rounder skin needs on top (PlayerFitTableHD) */
+    private static volatile boolean hdOn;
     private static volatile Set<String> known = Collections.emptySet();
     /** models never fitted, roughly or (zombies) by Fit: RealBodyShape.ROUGH.skip, a whole path or its last parts */
     private static volatile Set<String> skip = Collections.emptySet();
@@ -185,6 +187,7 @@ final class PlayerFit {
                 for (int j = 0; j < 12; j++) a[j] += p[k] * d[j];
                 any = true;
             }
+            if (hdOn && addHD(a, sex, b, p)) any = true;
             if (any && changes(a)) byName.put(FitTable.BONES[b], a);
         }
         for (int i = 0; i + 1 < FitTable.ALIAS.length; i += 2) {
@@ -218,6 +221,47 @@ final class PlayerFit {
         return m;
     }
 
+    /**
+     * The HD body stands out of the low-poly one the tables above fit to (facets rounded out, round legs, a heavy
+     * woman's inner thighs filled): its extra maps, base once, a shape parameter by its value, fill by the fill gain of
+     * the amount. True when anything was added to a.
+     */
+    private static boolean addHD(float[] a, int sex, int bone, float[] p) {
+        float[][][] table = PlayerFitTableHD.DELTA[sex];
+        float amount = p[0] - p[1];                               // PlayerFitTable.KEYS: fat, thin, ...
+        boolean any = false;
+        for (int k = 0; k < PlayerFitTableHD.KEYS.length && k < table.length; k++) {
+            String key = PlayerFitTableHD.KEYS[k];
+            float c;
+            if (key.equals("base")) c = 1f;
+            else if (key.equals("fill")) c = fillGain(amount);
+            else {
+                int i = indexOf(PlayerFitTable.KEYS, key);
+                c = i < 0 || i >= p.length ? 0f : p[i];
+            }
+            if (c == 0f || table[k] == null || bone >= table[k].length || table[k][bone] == null) continue;
+            float[] d = table[k][bone];
+            for (int j = 0; j < 12; j++) a[j] += c * d[j];
+            any = true;
+        }
+        return any;
+    }
+
+    /** the HD add-on's inner thigh fill: none below the first amount, all from the last, straight lines between */
+    static float fillGain(float amount) {
+        float[] g = PlayerFitTableHD.FILL_GAIN;
+        if (amount <= g[0]) return g[1];
+        for (int i = 2; i + 1 < g.length; i += 2) {
+            if (amount <= g[i]) return g[i - 1] + (g[i + 1] - g[i - 1]) * (amount - g[i - 2]) / (g[i] - g[i - 2]);
+        }
+        return g[g.length - 1];
+    }
+
+    private static int indexOf(String[] keys, String key) {
+        for (int i = 0; i < keys.length; i++) if (keys[i].equals(key)) return i;
+        return -1;
+    }
+
     /** not the identity (a change of at least 0.1 mm / 0.1 %) */
     private static boolean changes(float[] a) {
         for (int j = 0; j < 12; j++) if (Math.abs(a[j] - IDENTITY[j]) > 1e-4f) return true;
@@ -241,7 +285,7 @@ final class PlayerFit {
             stampMtime = sm;
             boolean wasOn = on;
             if (cfgChanged) {
-                boolean r = false, f = true;
+                boolean r = false, f = true, h = false;
                 Set<String> k = new HashSet<>(), sk = new HashSet<>();
                 if (cm > 0 && cm + 5000 >= liveSince) {           // written in this session: the mod is on
                     for (String line : Files.readAllLines(cfg, StandardCharsets.UTF_8)) {
@@ -250,6 +294,7 @@ final class PlayerFit {
                         String key = line.substring(0, eq).trim(), v = line.substring(eq + 1).trim();
                         if (key.equals("rough")) r = v.equals("1") || v.equalsIgnoreCase("true");
                         else if (key.equals("female")) f = !(v.equals("0") || v.equalsIgnoreCase("false"));
+                        else if (key.equals("hd")) h = v.equals("1") || v.equalsIgnoreCase("true");
                         else if (key.equals("known") && !v.isEmpty()) k.add(MeshInfo.norm(v));
                         else if (key.equals("skip") && !v.isEmpty()) sk.add(MeshInfo.norm(v));
                     }
@@ -257,10 +302,12 @@ final class PlayerFit {
                 known = k;
                 skip = sk;
                 femaleOn = f;
+                hdOn = h;
                 on = r;
                 pieces.clear();
                 if (on) RBSHook.log("rough fit: on - " + k.size() + " model(s) have the mod's own data, other 3D clothes on the player are fitted roughly"
-                        + (f ? "" : " (men only: women keep another mod's body)") + (sk.isEmpty() ? "" : ", skip list: " + sk));
+                        + (f ? "" : " (men only: women keep another mod's body)") + (sk.isEmpty() ? "" : ", skip list: " + sk)
+                        + (h ? ", HD body: a little more room for its rounder skin" : ""));
                 else if (wasOn || cm > 0) RBSHook.log("rough fit: off" + (cm > 0 && cm + 5000 < liveSince ? " (the mod did not start this session)" : ""));
             }
             float[] p = new float[PlayerFitTable.KEYS.length];
