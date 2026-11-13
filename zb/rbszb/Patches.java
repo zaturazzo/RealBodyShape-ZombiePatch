@@ -8,13 +8,14 @@ import zombie.core.skinnedmodel.animation.AnimationPlayer;
 import zombie.core.skinnedmodel.model.Model;
 import zombie.core.skinnedmodel.model.ModelInstance;
 import zombie.core.skinnedmodel.model.SkinningData;
+import zombie.core.skinnedmodel.model.jassimp.ProcessedAiScene;
 import zombie.core.skinnedmodel.population.ClothingItem;
 import zombie.core.skinnedmodel.visual.HumanVisual;
 import zombie.core.skinnedmodel.visual.ItemVisual;
 import zombie.core.skinnedmodel.visual.ItemVisuals;
 
 /**
- * Real Body Shape's ten game hooks as ZombieBuddy patches (Byte Buddy advice: the code below is copied into the game
+ * Real Body Shape's eleven game hooks as ZombieBuddy patches (Byte Buddy advice: the code below is copied into the game
  * method, before or after its own). They call the same RBSHook functions the classpath patch calls, so both builds do
  * exactly the same; the first one of these that runs marks the JVM and the classpath copy steps aside (RBSHook.zbMark).
  * strictMatch: only the overload whose parameter types are the @Argument types below.
@@ -110,6 +111,20 @@ public final class Patches {
         public static void enter(@Patch.This Object smart) {
             RBSHook.zbMark();
             RBSHook.beforeSmartCalculate(smart);
+        }
+    }
+
+    @Patch(className = "zombie.core.skinnedmodel.model.ModelMesh", methodName = "onLoadedX", strictMatch = true)
+    public static class MeshLoadedX {
+        @Patch.OnEnter
+        public static void enter(@Patch.This Object mesh, @Patch.Argument(0) ProcessedAiScene scene) {
+            RBSHook.zbMark();
+            RBSHook.beforeMeshLoadedX(mesh);
+        }
+
+        @Patch.OnExit
+        public static void exit(@Patch.This Object mesh) {
+            RBSHook.afterMeshLoadedX(mesh);
         }
     }
 

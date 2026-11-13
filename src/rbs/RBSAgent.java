@@ -6,7 +6,7 @@ import java.security.ProtectionDomain;
 
 /**
  * RealBodyShape zombie patch (local use only, not a Workshop item).
- * Ten methods of six game classes are redirected to RBSHook so zombies get their own bodies and heights, clothes
+ * Eleven methods of seven game classes are redirected to RBSHook so zombies get their own bodies and heights, clothes
  * that are not the player's reshaped ones, and (optionally) missing limbs:
  *   ModelManager.getBodyModel(IsoGameCharacter)   -> getBodyModel$rbs       + RBSHook.getBodyModel(mgr, chr)
  *   ModelManager.newAdditionalModelInstance(...)   -> newAdditionalModelInstance$rbs + RBSHook.additionalModel(...)
@@ -18,6 +18,7 @@ import java.security.ProtectionDomain;
  *   AnimatedModel.addClothingItem(...)             -> addClothingItem$rbs    + RBSHook.animatedClothing(...)    (corpse atlas)
  *   SmartTexture.calculate()                       -> calculate$rbs          + RBSHook.smartCalculate(st)       (face layer)
  *   ModelInstanceTextureCreator.init(visual, ...)  -> init$rbs               + RBSHook.textureCreatorInit(...)  (face layer)
+ *   ModelMesh.onLoadedX(scene)                     -> onLoadedX$rbs          + RBSHook.meshLoadedX(mesh, scene) (reloads keep the anims)
  * Two ways to apply the same patch:
  *   1. classpath mode (default, used by zombie_patch.py / install.bat): rbs_patch.jar holds the pre-patched classes
  *      and is listed first in ProjectZomboid64.json "classpath", so it shadows the game's copies.
@@ -37,6 +38,7 @@ public final class RBSAgent {
     static final String RENAMED_CLOTHING = "addClothingItem$rbs";
     static final String RENAMED_UPDATE_SKIN = "UpdateSkinTransforms$rbs";
     static final String RENAMED_ROOT_CHILD = "transformRootChildBones$rbs";
+    static final String RENAMED_LOADED_X = "onLoadedX$rbs";
     static final String ADDITIONAL_DESC = "(Ljava/lang/String;Ljava/lang/String;Lzombie/characters/IsoGameCharacter;"
             + "Lzombie/core/skinnedmodel/animation/AnimationPlayer;Ljava/lang/String;)Lzombie/core/skinnedmodel/model/ModelInstance;";
     static final String CLOTHING_DESC = "(Lzombie/core/skinnedmodel/visual/ItemVisual;Lzombie/core/skinnedmodel/population/ClothingItem;)V";
@@ -76,6 +78,9 @@ public final class RBSAgent {
           "smartCalculate", "(Ljava/lang/Object;)V", null },
         { "zombie/core/skinnedmodel/model/ModelInstanceTextureCreator", "init", CREATOR_INIT_DESC, RENAMED_CREATOR_INIT,
           "textureCreatorInit", "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", null },
+        { "zombie/core/skinnedmodel/model/ModelMesh", "onLoadedX",
+          "(Lzombie/core/skinnedmodel/model/jassimp/ProcessedAiScene;)V", RENAMED_LOADED_X,
+          "meshLoadedX", "(Ljava/lang/Object;Ljava/lang/Object;)V", null },
     };
     static volatile boolean agentActive;
 

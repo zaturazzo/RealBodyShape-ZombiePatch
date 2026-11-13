@@ -291,6 +291,42 @@ public final class RBSHook {
         FaceLayer.afterInit(creator);
     }
 
+    // ---------------- ModelMesh.onLoadedX(scene) ----------------
+    // a model file reloaded during play keeps its SkinningData when the skeleton is the same, so the character's
+    // animations are not all dropped and restarted (see KeepSkeleton)
+    public static void meshLoadedX(Object mesh, Object scene) {
+        if (!zbActive()) beforeMeshLoadedX(mesh);
+        call(origLoadedX(mesh), mesh, scene);
+        if (!zbActive()) afterMeshLoadedX(mesh);
+    }
+
+    public static void beforeMeshLoadedX(Object mesh) {
+        KeepSkeleton.before(mesh);
+    }
+
+    public static void afterMeshLoadedX(Object mesh) {
+        KeepSkeleton.after(mesh);
+    }
+
+    private static Method origLoadedX;
+
+    private static Method origLoadedX(Object mesh) {
+        Method o = origLoadedX;
+        if (o == null) {
+            try {
+                ClassLoader cl = mesh.getClass().getClassLoader();
+                Class<?> mm = Class.forName("zombie.core.skinnedmodel.model.ModelMesh", false, cl);
+                o = mm.getDeclaredMethod(RBSAgent.RENAMED_LOADED_X,
+                        Class.forName("zombie.core.skinnedmodel.model.jassimp.ProcessedAiScene", false, cl));
+                o.setAccessible(true);                       // the original is protected
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("RBS hook: original ModelMesh.onLoadedX missing", e);
+            }
+            origLoadedX = o;
+        }
+        return o;
+    }
+
     private static Method origCalculate, origCreatorInit;
 
     private static Method origCalculate(Object smart) {
