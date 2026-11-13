@@ -171,6 +171,7 @@ public final class RBSHook {
         }
         HeadLook.update(player);
         Jiggle.update(player);
+        Hair.update(player);                                   // after the head look: the tie follows the turned head
     }
 
     // ---------------- AnimationPlayer.transformRootChildBones(bone, rotation) ----------------

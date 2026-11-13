@@ -102,23 +102,28 @@ final class Jiggle {
     /** a few seconds of one fat zombie's spring go to the log, to see what it gets */
     static final int TRACE_LINES = 0;                  // 90 while tuning (2026-11-06)
 
-    private static volatile boolean enabled = true, players = true;
+    static volatile boolean enabled = true, players = true;
     /** women players too; 0 while Hotsco's New Body replaces the female body (its EX add-on has its own physics) */
     private static volatile boolean femalePlayers = true;
     private static volatile float strength = 0.5f;          // 50 %: what looked right in game (2026-11-06)
     private static volatile float bustPct = 0.6f, bagsPct = 1f, limbsPct = 1f, breathPct = 1f, hitsPct = 1f;
     private static volatile float buttPct = 1f, underwearBoost = UNDERWEAR_BOOST;
+    /** our hair's sway (Hair, sbj_ hair models): how much (1 = 100 %), and the texture's v read the other way round */
+    static volatile float hairPct = 1f, hairGravity = 1f;
+    static volatile boolean hairVFlip = false;
     private static long cfgMtime = -1, cfgNextCheck;
-    private static volatile boolean failed, ready;
+    static volatile boolean failed, ready;
 
     /** 0 = not tried, 2 = compiled and in use, 3 = missing or broken (never switched) */
-    private static volatile int shaderState;
+    static volatile int shaderState;
     private static volatile Object shader;
-    private static Field fEffect, fModelMesh, fMeshSkinning, fBoneName, fBoneOffset;
-    private static Method mCreateShader, mShaderName, mShaderProgram, mIsCompiled, mGetString;
-    private static Method apCharacter, apSkinning, apCount, apModelAt, sdNumBones, sdBoneAt;
-    private static Method chrX, chrY, chrForward, v2X, v2Y, chrFemale, chrAnimal, chrNutrition, nutWeight;
-    private static Method chrHasHit, chrHitBehind, chrOnFloor, chrStats, statsGet, chrRunning, chrSprinting;
+    // package-private: Hair uses them too
+    static Field fEffect, fModelMesh, fMeshSkinning, fBoneName, fBoneOffset;
+    static Method mCreateShader, mShaderName, mShaderProgram, mIsCompiled, mGetString;
+    static Method apCharacter, apSkinning, apCount, apModelAt, sdNumBones, sdBoneAt;
+    static Method chrX, chrY, chrForward, v2X, v2Y, chrFemale, chrAnimal, chrNutrition, nutWeight;
+    static Method chrHasHit, chrHitBehind, chrOnFloor;   // Hair uses them too
+    private static Method chrStats, statsGet, chrRunning, chrSprinting;
     private static Method chrWorn, wornSize, wornGet, wornLocation, chrSitGround, chrSitFurniture, chrActionState;
     private static Method wornItem, itemType;
     /** the action states of sitting (not the sitting down, not the getting up: in a stride the web held by the two
@@ -136,8 +141,8 @@ final class Jiggle {
     private static Field fFemaleBody, fMaleBody;
     private static Object modelManager;
     private static Method mStore, mLoad, mInvert;
-    private static Constructor<?> matrixCtor;
-    private static Object fileSystem, zero, identity;
+    static Constructor<?> matrixCtor;
+    static Object fileSystem, zero, identity;
 
     /** model (zombie body or zombie clothing) -> the effect it had before the switch */
     private static final Map<Object, Object> switched = Collections.synchronizedMap(new WeakHashMap<>());
@@ -193,7 +198,7 @@ final class Jiggle {
     /** the 60-slot array handed out for one mesh of one character, with its own slot 59 matrix */
     static final class Pad {
         Object[] out;
-        Object slot, slot2;
+        Object slot, slot2, slot3;      // slot3: the hair's springs (Hair.SLOT)
     }
 
     // ---------------- models: which ones draw with the shader ----------------
@@ -247,7 +252,7 @@ final class Jiggle {
         if (shaderName != null && !shaderName.toString().isEmpty() && !shaderName.toString().equalsIgnoreCase("basicEffect"))
             return shaderName;                                  // a piece with its own shader keeps it
         String m = mesh == null ? "" : mesh.toString().toLowerCase(Locale.ROOT).replace('\\', '/');
-        if (m.contains("hair") || m.contains("beard")) return shaderName;
+        if (m.contains("hair") || m.contains("beard")) return Hair.shaderFor(m, shaderName);   // ours sway, the rest stay
         if (isGear(m) && bagShaderThere()) return SHADER_BAG;
         return SHADER;
     }
@@ -332,6 +337,7 @@ final class Jiggle {
                 return false;
             }
             bagShaderState = compileBagShader(model);
+            Hair.compile(model);                                 // our hair's shader, when the hair mod is on
             fEffect.set(model, before);                          // use() records it and switches
             shader = s;
             shaderState = 2;
@@ -385,6 +391,7 @@ final class Jiggle {
             }
             Object[] out = pad.out;
             System.arraycopy(tr, 0, out, 0, tr.length);
+            if (tr.length <= Hair.SLOT) out[Hair.SLOT] = Hair.slot(player, pad);   // identity unless its hair sways
             State s = enabled ? states.get(player) : null;
             // a mesh in a space of its own (another mod's FBX, x100, Z up): the shader's rows are in the game's space and
             // threw its sleeves about (user, 2026-11-11) - they are converted to its space, so it bounces like the rest
@@ -894,7 +901,7 @@ final class Jiggle {
     // ---------------- bind-pose frame of a body ----------------
 
     @SuppressWarnings("unchecked")
-    private static float[] frameOf(Object data) throws Exception {
+    static float[] frameOf(Object data) throws Exception {
         if (frames.containsKey(data)) return frames.get(data);
         float[] out = null;
         String why = "", sign = "";
@@ -974,7 +981,7 @@ final class Jiggle {
         return l < 1e-6f ? null : new float[]{ v[0] / l, v[1] / l, v[2] / l };
     }
 
-    private static float[] bindPos(List<Object> offsets, int i) throws Exception {
+    static float[] bindPos(List<Object> offsets, int i) throws Exception {
         if (i < 0 || i >= offsets.size() || offsets.get(i) == null) return null;
         Object inv = matrixCtor.newInstance();
         if (mInvert.invoke(null, offsets.get(i), inv) == null) return null;
@@ -988,7 +995,7 @@ final class Jiggle {
 
     // ---------------- matrices ----------------
 
-    private static void read(Object matrix, float[] out) throws Exception {
+    static void read(Object matrix, float[] out) throws Exception {
         FloatBuffer buf = BUF.get();
         buf.clear();
         mStore.invoke(matrix, buf);
@@ -996,7 +1003,7 @@ final class Jiggle {
         buf.get(out, 0, 16);
     }
 
-    private static void write(Object matrix, float[] m) throws Exception {
+    static void write(Object matrix, float[] m) throws Exception {
         FloatBuffer buf = BUF.get();
         buf.clear();
         buf.put(m, 0, 16);
@@ -1014,7 +1021,7 @@ final class Jiggle {
                 bounced, maxLag, states.size(), hits, landings));
     }
 
-    private static synchronized void init() {
+    static synchronized void init() {
         if (ready || failed) return;
         try {
             if (!RBSHook.ensureInit()) throw new IllegalStateException("RBSHook not ready");
@@ -1122,7 +1129,7 @@ final class Jiggle {
         return (float) Math.max(0, Math.min(400, Double.parseDouble(v))) / 100f;
     }
 
-    private static void loadConfig() {
+    static void loadConfig() {
         long now = System.nanoTime();
         if (now < cfgNextCheck) return;
         cfgNextCheck = now + 5_000_000_000L;
@@ -1135,7 +1142,8 @@ final class Jiggle {
             boolean en = enabled, pl = players, fp = true;
             float st = strength, pf = playerFrom, bu = bustPct, ba = bagsPct, li = limbsPct, br = breathPct, hi = hitsPct;
             float bt = buttPct, uw = underwearBoost;
-            boolean sw = true;
+            boolean sw = true, hv = false;
+            float ha = hairPct, hg = hairGravity;
             for (String line : Files.readAllLines(p, StandardCharsets.UTF_8)) {
                 int eq = line.indexOf('=');
                 if (eq < 0 || line.trim().startsWith("#")) continue;
@@ -1155,6 +1163,9 @@ final class Jiggle {
                         case "butt": bt = pct(v); break;
                         case "underwear": uw = pct(v); break;
                         case "sit_web": sw = !(v.equals("0") || v.equalsIgnoreCase("false")); break;
+                        case "hair": ha = pct(v); break;
+                        case "hair_gravity": hg = pct(v); break;
+                        case "hair_vflip": hv = v.equals("1") || v.equalsIgnoreCase("true"); break;
                         default: break;
                     }
                 } catch (NumberFormatException ignored) {}
@@ -1173,9 +1184,13 @@ final class Jiggle {
             buttPct = bt;
             underwearBoost = uw;
             sitWeb = sw;
+            hairPct = ha;
+            hairGravity = hg;
+            hairVFlip = hv;
             if (wasOn && !en && ready) restoreAll();
-            RBSHook.log(String.format(Locale.ROOT, "jiggle config: enabled=%s strength=%.0f%% players=%s (from %.0f kg%s) bust=%.0f%% bags=%.0f%% limbs=%.0f%% breathing=%.0f%% hits=%.0f%% buttocks=%.0f%% underwear only x%.2f",
-                    en, st * 100, pl, pf, fp ? "" : ", men only", bu * 100, ba * 100, li * 100, br * 100, hi * 100, bt * 100, uw));
+            RBSHook.log(String.format(Locale.ROOT, "jiggle config: enabled=%s strength=%.0f%% players=%s (from %.0f kg%s) bust=%.0f%% bags=%.0f%% limbs=%.0f%% breathing=%.0f%% hits=%.0f%% buttocks=%.0f%% underwear only x%.2f hair=%.0f%% gravity=%.0f%%%s",
+                    en, st * 100, pl, pf, fp ? "" : ", men only", bu * 100, ba * 100, li * 100, br * 100, hi * 100, bt * 100, uw,
+                    ha * 100, hg * 100, hv ? " (v flipped)" : ""));
         } catch (Exception e) {
             RBSHook.warn("jiggle config: " + e);
         }
