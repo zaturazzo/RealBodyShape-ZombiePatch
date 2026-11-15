@@ -78,10 +78,22 @@ final class PlayerFit {
         if (System.nanoTime() >= nextCheck) load();
         if (!on) return;
         Object chr = apCharacter.invoke(player);
-        if (chr == null || !playerClass.isInstance(chr) || (Boolean) chrAnimal.invoke(chr)) return;
-        boolean female = (Boolean) chrFemale.invoke(chr);
+        boolean female;
+        Object inst;
+        if (chr == null) {
+            // a UI preview of the player (the character info window): an AnimatedModel showing that character
+            Object am = previews.get(player);
+            if (am == null) return;
+            Object who = amCharacter.invoke(am);
+            if (who == null || !playerClass.isInstance(who) || (Boolean) chrAnimal.invoke(who)) return;
+            female = (Boolean) amFemale.invoke(am);
+            inst = fAmInstance.get(am);
+        } else {
+            if (!playerClass.isInstance(chr) || (Boolean) chrAnimal.invoke(chr)) return;
+            female = (Boolean) chrFemale.invoke(chr);
+            inst = chrGetModel.invoke(chr);
+        }
         if (female && !femaleOn) return;
-        Object inst = chrGetModel.invoke(chr);
         if (inst == null) return;
         Object body = fInstModel.get(inst);
         if (body == null || body != (female ? fFemaleBody : fMaleBody).get(modelManager)) return;   // another mod's body
@@ -343,6 +355,47 @@ final class PlayerFit {
         if (now < summaryAt) return;
         summaryAt = now + 60_000_000_000L;
         RBSHook.log("rough fit: " + fitted + " clothing pose(s) fitted on players so far");
+    }
+
+    // ---------------- UI previews ----------------
+    // The character info window draws the player with an AnimatedModel of its own: its AnimationPlayer has no
+    // character, so without this the clothes fitted roughly in the world kept their own size there (user, 2026-11-14).
+    // RBSHook.afterAnimatedPlayer tells which AnimatedModel an AnimationPlayer belongs to; only previews whose
+    // character is a player are fitted (the corpse atlas's have none).
+
+    /** AnimationPlayer -> the AnimatedModel it animates */
+    private static final Map<Object, Object> previews = Collections.synchronizedMap(new WeakHashMap<>());
+    private static Method amCharacter, amFemale;
+    private static Field fAmInstance;
+
+    static void rememberPreview(Object player, Object model) {
+        if (player == null || model == null || failed) return;
+        try {
+            if (amCharacter == null) {
+                Class<?> c = model.getClass();
+                amCharacter = c.getMethod("getCharacter");
+                amFemale = c.getMethod("isFemale");
+                Field f = c.getDeclaredField("modelInstance");
+                f.setAccessible(true);
+                fAmInstance = f;
+            }
+            if (previews.get(player) != model) previews.put(player, model);
+        } catch (Throwable e) {
+            RBSHook.warn("rough fit: UI previews left as they are: " + e);
+            amCharacter = null;
+        }
+    }
+
+    /** the model instance of the player's UI preview this AnimationPlayer animates, or null (for MeshInfo) */
+    static Object previewInstance(Object player) {
+        Object am = player == null ? null : previews.get(player);
+        if (am == null || fAmInstance == null) return null;
+        try {
+            Object who = amCharacter.invoke(am);
+            return who != null && playerClass != null && playerClass.isInstance(who) ? fAmInstance.get(am) : null;
+        } catch (Throwable e) {
+            return null;
+        }
     }
 
     // ---------------- setup ----------------

@@ -50,6 +50,10 @@ final class MeshInfo {
         if (e != null && (e[0] != null || now < (Long) e[2])) return e[0] == null ? null : e;
         Object chr = player == null ? null : apCharacter.invoke(player);
         Object mesh = chr == null ? null : find(chr, data);
+        if (mesh == null && chr == null) {
+            Object inst = PlayerFit.previewInstance(player);              // the player's UI preview
+            if (inst != null) mesh = search((List<?>) fInstSub.get(inst), data, 1);
+        }
         if (mesh == null) {
             byData.put(data, new Object[]{ null, new WeakReference<>(null), now + 3_000_000_000L });
             return null;

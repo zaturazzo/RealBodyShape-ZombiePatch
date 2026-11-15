@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -28,6 +29,13 @@ import java.util.WeakHashMap;
  *     p'(bone) = p'(parent) + k * (p(bone) - p(parent))
  * The animation and the ragdoll read their own local bone transforms, so nothing builds up from frame to frame.
  * transformRootChildBones (a turn-around animation event) rebuilds these matrices too, so it is hooked as well.
+ *
+ * Never twice on the same pose: UpdateSkinTransforms is public, and a call that does not rebuild the matrices first
+ * (another mod's, or anything else) would stretch the stretched pose again, so one zombie in a horde grew about k^20
+ * times, some 15 m tall (a player's report, 2026-11-14, with Real Limbs and Visceral). So the matrices written last time
+ * are kept for each AnimationPlayer: a pose that still holds one of them was not rebuilt and is left as it is. And as a
+ * last guard, a segment whose length is already off from what it was in the first pose of that player (the skeleton's
+ * own: the animations keep every bone's length) is left at that length instead of being stretched once more.
  *
  * A zombie's height is a stable hash of its looks (the fields saved with a corpse, like the body variant), so the
  * corpse keeps it and every machine in multiplayer agrees without syncing anything.
@@ -52,11 +60,16 @@ final class Height {
     private static final Map<Object, long[]> byChar = Collections.synchronizedMap(new WeakHashMap<>());
     /** SkinningData -> what the skeleton needs */
     private static final Map<Object, Skel> skels = Collections.synchronizedMap(new WeakHashMap<>());
+    /** AnimationPlayer -> what was written into its pose last time, and its segment lengths (pooled players come and go) */
+    private static final Map<Object, Pose> poses = Collections.synchronizedMap(new WeakHashMap<>());
     private static final ThreadLocal<FloatBuffer> BUF = ThreadLocal.withInitial(() -> FloatBuffer.allocate(16));
     private static final ThreadLocal<Work> WORK = ThreadLocal.withInitial(Work::new);
+    /** a stretched segment more than this much longer or shorter than in the player's first pose is not stretched again */
+    static final float OFF = 0.06f;
 
     private static int diag;
-    private static long drawn, summaryAt;
+    private static long drawn, summaryAt, again, offSegs;
+    private static boolean againSaid, offSaid;
     private static double minK = 9, maxK = 0;
 
     private Height() {}
@@ -72,6 +85,13 @@ final class Height {
         float[] up;
         boolean ok;
         String why = "";
+    }
+
+    static final class Pose {
+        /** the translations written last time (n * 3), NaN where nothing was written */
+        float[] out;
+        /** each stretched segment's length in the first pose of this player (index = bone), not stretched by us yet */
+        float[] len;
     }
 
     static final class Work {
@@ -105,19 +125,32 @@ final class Height {
         if (!s.ok) return;
         int n = (Integer) apCount.invoke(player);
         if (n != s.n) return;
-        stretch(player, s, n, (float) k);
+        if (!stretch(player, s, n, (float) k, poseOf(player, n))) {
+            summary();
+            return;
+        }
         drawn++;
         if (k < minK) minK = k;
         if (k > maxK) maxK = k;
         summary();
     }
 
-    private static void stretch(Object player, Skel s, int n, float k) throws Exception {
+    private static Pose poseOf(Object player, int n) {
+        Pose ps = poses.get(player);
+        if (ps == null || (ps.len != null && ps.len.length != n)) {
+            ps = new Pose();
+            poses.put(player, ps);
+        }
+        return ps;
+    }
+
+    /** false when the pose is left as it is: it still holds what was written into it last time (not rebuilt since) */
+    private static boolean stretch(Object player, Skel s, int n, float k, Pose ps) throws Exception {
         Work w = WORK.get();
         w.size(n);
         for (int i = 0; i < n; i++) {
             Object mt = apModelAt.invoke(player, i);
-            if (mt == null) return;
+            if (mt == null) return false;
             w.mats[i] = mt;
             read(mt, w.m[i]);
         }
@@ -130,7 +163,19 @@ final class Height {
             p[i * 3 + 1] = m[ty];
             p[i * 3 + 2] = m[tz];
         }
+        if (stillOurs(p, ps.out, n)) {
+            again++;
+            if (!againSaid) {
+                againSaid = true;
+                RBSHook.log("height: a zombie pose came back still stretched (not rebuilt since): left as it is, never"
+                        + " stretched twice. Called from: " + caller());
+            }
+            return false;
+        }
+        if (ps.len == null) ps.len = lengths(p, s, n);           // a pose we never touched: the skeleton's own lengths
+        float[] len = ps.len;                                    // null until a pose with every segment there was seen
         // joints, parents first (the game's own loop relies on that order too)
+        int off = 0;
         for (int i = 0; i < n; i++) {
             int a = s.parent[i];
             if (a < 0) {
@@ -139,8 +184,23 @@ final class Height {
                 q[i * 3 + 2] = p[i * 3 + 2];
                 continue;
             }
-            float f = s.scaled[i] ? k : 1f;
+            float f = 1f;
+            if (s.scaled[i]) {
+                f = k;
+                if (len != null && Math.abs((float) Math.sqrt(dist2(p, i, a)) / len[i] - 1f) > OFF) {
+                    f = 1f;                                      // already longer or shorter: stays as it is
+                    off++;
+                }
+            }
             for (int c = 0; c < 3; c++) q[i * 3 + c] = q[a * 3 + c] + f * (p[i * 3 + c] - p[a * 3 + c]);
+        }
+        if (off > 0) {
+            offSegs += off;
+            if (!offSaid) {
+                offSaid = true;
+                RBSHook.log("height: " + off + " segment(s) of a zombie pose were already longer or shorter than the"
+                        + " skeleton's own: left at their length, not stretched again. Called from: " + caller());
+            }
         }
         // prop bones hang from the root, not the hand: move each with the hand it is closest to
         for (int j : s.props) {
@@ -153,6 +213,9 @@ final class Height {
         float lowBefore = Math.min(dot(p, s.lFoot, up), dot(p, s.rFoot, up));
         float lowAfter = Math.min(dot(q, s.lFoot, up), dot(q, s.rFoot, up));
         float d = lowBefore - lowAfter;
+        float[] out = new float[n * 3];
+        Arrays.fill(out, Float.NaN);
+        ps.out = out;                                            // filled as written: a write that fails stays NaN
         for (int i = 0; i < n; i++) {
             float[] m = w.m[i];
             float x = q[i * 3] + up[0] * d, y = q[i * 3 + 1] + up[1] * d, z = q[i * 3 + 2] + up[2] * d;
@@ -161,7 +224,50 @@ final class Height {
             m[ty] = y;
             m[tz] = z;
             write(w.mats[i], m);
+            out[i * 3] = x;
+            out[i * 3 + 1] = y;
+            out[i * 3 + 2] = z;
         }
+        return true;
+    }
+
+    /** does the pose still hold one of the translations written last time? (a rebuilt one holds none of them: the game
+     *  makes every matrix anew, from the animation or the local bones) */
+    static boolean stillOurs(float[] p, float[] out, int n) {
+        if (out == null || out.length != n * 3) return false;
+        for (int i = 0; i < n; i++) {
+            float x = out[i * 3];
+            if (Float.isNaN(x)) continue;
+            if (p[i * 3] == x && p[i * 3 + 1] == out[i * 3 + 1] && p[i * 3 + 2] == out[i * 3 + 2]) return true;
+        }
+        return false;
+    }
+
+    /** the length of each stretched segment (0 for the others); null if one is not there (a pose not made yet, or a
+     *  limb another mod folded away): the reference is then taken from a later pose */
+    static float[] lengths(float[] p, Skel s, int n) {
+        float[] len = new float[n];
+        for (int i = 0; i < n; i++) {
+            if (!s.scaled[i]) continue;
+            len[i] = (float) Math.sqrt(dist2(p, i, s.parent[i]));
+            if (!(len[i] > 1e-3f)) return null;                  // under 1 mm (the shortest, the clavicle, is 29 mm)
+        }
+        return len;
+    }
+
+    /** who called UpdateSkinTransforms / transformRootChildBones this time (for the log; our own frames left out) */
+    private static String caller() {
+        StringBuilder b = new StringBuilder();
+        int shown = 0;
+        for (StackTraceElement e : new Throwable().getStackTrace()) {
+            String c = e.getClassName();
+            if (c.startsWith("rbs.") || c.startsWith("rbszb.") || c.startsWith("java.lang.reflect.")
+                    || c.startsWith("jdk.internal.") || c.startsWith("sun.reflect.")) continue;
+            if (shown++ > 0) b.append(" < ");
+            b.append(c.substring(c.lastIndexOf('.') + 1)).append('.').append(e.getMethodName());
+            if (shown >= 8) break;
+        }
+        return b.length() == 0 ? "?" : b.toString();
     }
 
     private static int nearest(float[] p, int j, int a, int b) {
@@ -319,7 +425,9 @@ final class Height {
         long now = System.nanoTime();
         if (now < summaryAt) return;
         summaryAt = now + 60_000_000_000L;
-        RBSHook.log(String.format(Locale.ROOT, "height: %d zombie pose(s) stretched so far, x%.3f .. x%.3f", drawn, minK, maxK));
+        RBSHook.log(String.format(Locale.ROOT, "height: %d zombie pose(s) stretched so far, x%.3f .. x%.3f", drawn, minK, maxK)
+                + (again > 0 ? "; " + again + " call(s) on a pose still stretched, left as it was" : "")
+                + (offSegs > 0 ? "; " + offSegs + " segment(s) already off their length, not stretched again" : ""));
     }
 
     private static synchronized void init() {

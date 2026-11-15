@@ -49,6 +49,16 @@ public final class RBSHook {
     /** female zombies get variants too; 0 while Hotsco's New Body replaces the female body (it keeps its own) */
     private static volatile boolean females = true;
     private static volatile int[] weights = { 15, 55, 22, 8 };
+    // patch 6.8: chances by sex and by line of work (the outfit), from the add-on's sandbox options via the config
+    private static volatile int[] wFemale, wMale;
+    private static volatile Map<String, int[]> groupWeights = Collections.emptyMap();
+    private static volatile Map<String, String> outfitGroup = Collections.emptyMap();     // outfit (lower case) -> group
+    private static volatile int cfgVersion;
+    /** visual -> {variant, cfgVersion}: the outfit and a corpse's stored body do not change */
+    private static final Map<Object, int[]> variantCache = Collections.synchronizedMap(new WeakHashMap<>());
+    private static java.lang.reflect.Field fVisualOwner;
+    private static Class<?> deadBodyClass;
+    private static volatile boolean ownerFailed;
     /** other players in multiplayer get the variant body of their weight (Others) */
     private static volatile boolean others = true;
     private static long cfgMtime = -1, cfgNextCheck;
@@ -167,7 +177,7 @@ public final class RBSHook {
         try {
             Height.apply(player);
         } catch (Throwable e) {
-            warn("zombie height failed: " + e);
+            warn("zombie height failed: " + why(e));
         }
         HeadLook.update(player);
         Jiggle.update(player);
@@ -185,7 +195,7 @@ public final class RBSHook {
         try {
             Height.apply(player);
         } catch (Throwable e) {
-            warn("zombie height (turn) failed: " + e);
+            warn("zombie height (turn) failed: " + why(e));
         }
         HeadLook.reapply(player);
     }
@@ -203,6 +213,7 @@ public final class RBSHook {
         } catch (Throwable e) {
             warn("animated model failed: " + e);
         }
+        PlayerFit.rememberPreview(p, model);
     }
 
     // ---------------- ModelManager.newAdditionalModelInstance(mesh, texture, chr, animPlayer, shader) ----------------
@@ -504,7 +515,7 @@ public final class RBSHook {
             return null;
         }
         keptBody.remove(chr);
-        int v = variant(visualHash(visual));
+        int v = variantOfVisual(visual);
         Object m = variantModelOf(female, v);
         if (m != null) tagVariant(chr, v);
         return m;
@@ -601,7 +612,7 @@ public final class RBSHook {
             return null;
         }
         keptBody.remove(visual);
-        return variantModel(female, visualHash(visual));
+        return variantModelOf(female, variantOfVisual(visual));
     }
 
     private static Object variantModel(boolean female, int hash) throws Exception {
@@ -666,7 +677,86 @@ public final class RBSHook {
 
     /** the body variant (index of NAMES) this visual gets */
     static int variantOf(Object visual) throws Exception {
-        return variant(visualHash(visual));
+        return variantOfVisual(visual);
+    }
+
+    /**
+     * A zombie's or a corpse's body (index of NAMES), the same everywhere it is asked for (its body model, its clothes,
+     * its belly): a corpse keeps the body its zombie had (ModData RBS_BodyVariant, copied to the corpse when it dies,
+     * saved with it); otherwise the chances of its line of work (its outfit, which a corpse also keeps) or of its sex,
+     * split by the stable hash of its looks.
+     */
+    static int variantOfVisual(Object visual) throws Exception {
+        int[] c = variantCache.get(visual);
+        int ver = cfgVersion;
+        if (c != null && c[1] == ver) return c[0];
+        Object owner = ownerOf(visual);
+        int v = -1;
+        if (owner != null && deadBodyClass != null && deadBodyClass.isInstance(owner)) v = storedVariant(owner);
+        if (v < 0) {
+            boolean female = (Boolean) vIsFemale.invoke(visual);
+            v = variant(visualHash(visual), weightsFor(female, outfitOf(owner)));
+        }
+        variantCache.put(visual, new int[]{ v, ver });
+        return v;
+    }
+
+    private static int[] weightsFor(boolean female, String outfit) {
+        if (outfit != null) {
+            String g = outfitGroup.get(outfit.toLowerCase(java.util.Locale.ROOT));
+            int[] w = g == null ? null : groupWeights.get(g);
+            if (w != null) return w;
+        }
+        int[] w = female ? wFemale : wMale;
+        return w != null ? w : weights;
+    }
+
+    /** the zombie or corpse a visual belongs to (HumanVisual.owner), or null */
+    private static Object ownerOf(Object visual) {
+        if (ownerFailed || visual == null) return null;
+        try {
+            if (fVisualOwner == null) {
+                ClassLoader cl = visual.getClass().getClassLoader();
+                java.lang.reflect.Field f = Class.forName("zombie.core.skinnedmodel.visual.HumanVisual", false, cl).getDeclaredField("owner");
+                f.setAccessible(true);
+                deadBodyClass = Class.forName("zombie.iso.objects.IsoDeadBody", false, cl);
+                fVisualOwner = f;
+            }
+            return fVisualOwner.get(visual);
+        } catch (Throwable e) {
+            ownerFailed = true;
+            warn("zombie bodies by line of work off (every zombie by its sex): " + e);
+            return null;
+        }
+    }
+
+    private static String outfitOf(Object owner) {
+        if (owner == null) return null;
+        try {
+            Object o = owner.getClass().getMethod("getOutfitName").invoke(owner);
+            return o == null ? null : o.toString();
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
+    /** the body a corpse's zombie had (ModData RBS_BodyVariant), or -1 */
+    private static int storedVariant(Object owner) {
+        try {
+            if (tRawget == null) {
+                Class<?> kt = Class.forName("se.krka.kahlua.vm.KahluaTable", false, RBSHook.class.getClassLoader());
+                tRawget = kt.getMethod("rawget", Object.class);
+                tRawset = kt.getMethod("rawset", Object.class, Object.class);
+                chrModData = Class.forName("zombie.iso.IsoObject", false, RBSHook.class.getClassLoader()).getMethod("getModData");
+            }
+            Object t = chrModData.invoke(owner);
+            Object v = t == null ? null : tRawget.invoke(t, "RBS_BodyVariant");
+            if (v instanceof Number) {
+                int i = ((Number) v).intValue();
+                if (i >= 0 && i < NAMES.length) return i;
+            }
+        } catch (Throwable ignored) {}
+        return -1;
     }
 
     /**
@@ -803,7 +893,10 @@ public final class RBSHook {
 
     /** Stable variant per zombie: mix of the visual hash, split by the configured weights. */
     static int variant(int id) {
-        int[] w = weights;
+        return variant(id, weights);
+    }
+
+    static int variant(int id, int[] w) {
         int h = id * 0x9E3779B1;
         h ^= h >>> 16;
         h *= 0x85EBCA6B;
@@ -831,11 +924,31 @@ public final class RBSHook {
             cfgMtime = mt;
             int[] w = weights.clone();
             boolean en = enabled, fe = true, pl = true;
+            int[] wf = null, wm = null;
+            Map<String, int[]> gw = new java.util.HashMap<>();
+            Map<String, String> og = new java.util.HashMap<>();
             for (String line : Files.readAllLines(p, StandardCharsets.UTF_8)) {
                 int eq = line.indexOf('=');
                 if (eq < 0) continue;
                 String k = line.substring(0, eq).trim(), v = line.substring(eq + 1).trim();
                 try {
+                    if (k.startsWith("chances.")) {
+                        String[] parts = v.split(",");
+                        if (parts.length == 4) {
+                            int[] c = new int[4];
+                            for (int i = 0; i < 4; i++) c[i] = Math.max(0, Integer.parseInt(parts[i].trim()));
+                            String g = k.substring(8);
+                            if (g.equals("female")) wf = c;
+                            else if (g.equals("male")) wm = c;
+                            else gw.put(g, c);
+                        }
+                        continue;
+                    }
+                    if (k.startsWith("outfits.")) {
+                        String g = k.substring(8);
+                        for (String o : v.split(",")) if (!o.trim().isEmpty()) og.put(o.trim().toLowerCase(java.util.Locale.ROOT), g);
+                        continue;
+                    }
                     switch (k) {
                         case "enabled": en = !(v.equals("0") || v.equalsIgnoreCase("false")); break;
                         case "thin": w[0] = Integer.parseInt(v); break;
@@ -849,10 +962,24 @@ public final class RBSHook {
                 } catch (NumberFormatException ignored) {}
             }
             weights = w;
+            wFemale = wf;
+            wMale = wm;
+            groupWeights = gw;
+            outfitGroup = og;
             enabled = en;
             females = fe;
             others = pl;
-            log("config: enabled=" + en + " thin/normal/fat/obese=" + w[0] + "/" + w[1] + "/" + w[2] + "/" + w[3]
+            cfgVersion++;
+            StringBuilder groups = new StringBuilder();
+            for (Map.Entry<String, int[]> e : gw.entrySet()) {
+                int[] c = e.getValue();
+                groups.append(", ").append(e.getKey()).append(' ').append(c[0]).append('/').append(c[1]).append('/').append(c[2]).append('/').append(c[3]);
+            }
+            log("config: enabled=" + en + " thin/normal/fat/obese="
+                    + (wf != null ? "women " + wf[0] + "/" + wf[1] + "/" + wf[2] + "/" + wf[3] + ", men " + (wm != null ? wm : w)[0] + "/"
+                        + (wm != null ? wm : w)[1] + "/" + (wm != null ? wm : w)[2] + "/" + (wm != null ? wm : w)[3]
+                        : w[0] + "/" + w[1] + "/" + w[2] + "/" + w[3])
+                    + (gw.isEmpty() ? "" : "; by line of work (" + og.size() + " outfits)" + groups)
                     + (fe ? "" : ", female zombies keep the body the game loads")
                     + (pl ? "" : ", other players keep the shared body"));
         } catch (Exception e) {
@@ -871,5 +998,17 @@ public final class RBSHook {
 
     static void warn(String s) {
         if (logged++ < 20) System.out.println("[RBS hook] WARNING " + s);
+    }
+
+    /** what went wrong, through the reflection wrappers (an InvocationTargetException says nothing by itself), with the
+     *  first places it came from */
+    static String why(Throwable e) {
+        Throwable c = e;
+        while ((c instanceof java.lang.reflect.InvocationTargetException
+                || c instanceof java.lang.reflect.UndeclaredThrowableException) && c.getCause() != null) c = c.getCause();
+        StringBuilder b = new StringBuilder(String.valueOf(c));
+        StackTraceElement[] st = c.getStackTrace();
+        for (int i = 0; i < st.length && i < 3; i++) b.append(i == 0 ? " at " : " < ").append(st[i]);
+        return b.toString();
     }
 }
