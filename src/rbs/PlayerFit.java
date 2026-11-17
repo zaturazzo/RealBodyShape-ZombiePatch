@@ -145,9 +145,14 @@ final class PlayerFit {
         } else if (skipped(path)) {
             kind = 0;
             why = "on the skip list (RealBodyShape.ROUGH.skip), left as it is";
-        } else if (known.contains(path)) {
+        } else if (known.contains(path) && otherModel(path) == null) {
             kind = 0;
             why = "the mod has its data";
+        } else if (known.contains(path)) {
+            // the game loads <name>.fbx / .glb before <name>.x: another mod's file of that name (Tomb's Player Body -
+            // Compatibility's trousers, shorts and skirt for Tomb's body) is what is worn, never the .x the mod reshapes
+            kind = 1;
+            why = "another mod's file is worn instead of the one the mod reshapes (" + otherModel(path) + ") - fitted roughly";
         } else {
             kind = 1;
             why = "no data - fitted roughly";
@@ -167,6 +172,40 @@ final class PlayerFit {
             if (path.equals(s) || path.endsWith("/" + s)) return true;
         }
         return false;
+    }
+
+    /** path -> the other mod's file the game loads for it, "" for none (the mod's own file is the one worn) */
+    private static final Map<String, String> others = new java.util.concurrent.ConcurrentHashMap<>();
+    private static Object fileSystem;
+    private static Method fsGetString;
+
+    /**
+     * Another mod's .fbx / .glb of this model, which the game loads instead of the .x the mod reshapes (the game tries
+     * .fbx, then .glb, then .x - FileTask_AbstractLoadModel.checkExtensionType), or null. A file in one of this mod's
+     * own folders (RealBodyShape...) is ours: the Tomb add-ons write their .fbx pieces there.
+     */
+    static String otherModel(String path) {
+        if (path == null || fsGetString == null) return null;
+        String v = others.get(path);
+        if (v == null) {
+            v = "";
+            for (String ext : new String[]{ ".fbx", ".glb" }) {
+                try {
+                    Object r = fsGetString.invoke(fileSystem, "media/models_X/" + path + ext);
+                    if (!(r instanceof String)) continue;
+                    java.io.File f = new java.io.File((String) r);
+                    if (!f.isFile()) continue;
+                    String abs = f.getAbsolutePath().replace('\\', '/');
+                    if (abs.toLowerCase(Locale.ROOT).matches(".*/realbodyshape[^/]*/.*")) break;   // ours
+                    v = abs;
+                    break;
+                } catch (Throwable ignored) {
+                    // cannot tell: treated as the mod's own file, as before
+                }
+            }
+            others.put(path, v);
+        }
+        return v.isEmpty() ? null : v;
     }
 
     /** the mod has its own data for this model (its files already have the shape) */
@@ -424,6 +463,13 @@ final class PlayerFit {
             modelManager = mm.getField("instance").get(null);
             fFemaleBody = mm.getField("femaleModel");
             fMaleBody = mm.getField("maleModel");
+            try {
+                Class<?> zfs = Class.forName("zombie.ZomboidFileSystem", false, cl);
+                fileSystem = zfs.getField("instance").get(null);
+                fsGetString = zfs.getMethod("getString", String.class);
+            } catch (Throwable e) {
+                RBSHook.warn("rough fit: cannot see which file the game loads for a model, the mod's own data is trusted: " + e);
+            }
             long start = System.currentTimeMillis();
             try {
                 start = java.lang.management.ManagementFactory.getRuntimeMXBean().getStartTime();

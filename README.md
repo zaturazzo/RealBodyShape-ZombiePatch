@@ -33,7 +33,9 @@ this patch adds them:
 - **Fixes (v6.8):** a zombie stretched to a giant height when another mod updated its pose more than once; zombies
   changing body, height or clothes when they died; far zombies scrunched into a ball with heavy lag since Project
   Viewpoint's latest update (in Viewpoint's first / third person views the bounce and the hair sway don't show: it
-  draws characters with its own shader).
+  draws characters with its own shader); a piece of clothing the mod reshapes that another mod replaces with its own
+  file (the game loads a .fbx before a .x - Tomb's Player Body - Compatibility's trousers, shorts and skirt) did not
+  grow at all - it now gets the rough fit.
 
 > **Using ZombieBuddy?** You do not need this download. The Workshop item contains the same patch as a ZombieBuddy
 > Java mod: enable **Real Body Shape - zombie patch through ZombieBuddy** in the mod list and you are done

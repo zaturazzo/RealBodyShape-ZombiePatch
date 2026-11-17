@@ -7,8 +7,9 @@ contains *Real Body Shape*, *Real Body Shape - Zombie Bodies*, *Real Body Shape 
   as your character moves; animations carry on when the body changes with weight (no jerk, no stuck sitting pose);
   Zombie Bodies takes its chances by sex and line of work, and its heights, from the Sandbox options; the left hand
   stays on a two-handed melee weapon while swinging. Fixed: a zombie
-  stretched to a giant height, zombies changing body, height or clothes when they died, and far zombies scrunched
-  into a ball with heavy lag since Project Viewpoint's latest update.
+  stretched to a giant height, zombies changing body, height or clothes when they died, far zombies scrunched
+  into a ball with heavy lag since Project Viewpoint's latest update, and clothes another mod replaces with its own
+  file (Tomb's Player Body - Compatibility's trousers, shorts and skirt) not growing at all.
 - Head look: your character turns their head toward the nearest zombie in sight; zombies chasing you look at you;
   left standing still for two minutes, your character looks up at the camera.
 - Soft body physics: bellies, bust, buttocks and backpacks bounce, characters breathe, bodies shake when hit; skirts
