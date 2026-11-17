@@ -21,9 +21,18 @@ import java.util.regex.Pattern;
  * Zombie skins (ZedBody) have no layer. No layer file (the mod off) -> nothing happens.
  * A skin texture another mod replaces (a body mod that ships its own FemaleBody01..05 with another layout, skin
  * retextures...) gets no layer either: it is painted for the game's own skins (2026-11-07).
+ * A mod that gives the HD body a head of its own (RealBodyShape_HD: RBS_HEAD_MODS) ships its face layer as
+ * media/textures/RBSHeadFace/&lt;skin&gt;.png - used in place of ours whatever the mods' order - and the game's
+ * makeup moved onto that face as media/textures/RBSHeadMakeUp/&lt;the game's file name&gt;: a character with the
+ * layer gets those in place of media/textures/Body/MakeUp/... (2026-11-16, a local face mod). Without such files
+ * nothing changes. With several heads (RealBodyShape_HD's Face option) the chosen one's are in sub-folders named after
+ * it, and the game's face can be chosen too (Head).
  */
 final class FaceLayer {
     static final String DIR = "media/textures/RBSFace/";
+    static final String HEAD_DIR = "media/textures/RBSHeadFace/";
+    static final String HEAD_MAKEUP = "media/textures/RBSHeadMakeUp/";
+    static final String GAME_MAKEUP = "media/textures/Body/MakeUp/";
     private static final Pattern SKIN = Pattern.compile("(?i)(?:^|[/\\\\])((?:Female|Male)Body0[1-5])a?(?:\\.png)?$");
 
     private static volatile boolean failed, ready;
@@ -33,6 +42,9 @@ final class FaceLayer {
     private static Class<?> charSmartClass;
     private static final Map<String, Object> textures = new HashMap<>();   // layer path -> Texture, or MISSING
     private static final Map<String, Boolean> vanillaSkin = new HashMap<>(); // layer path -> its skin is the game's own
+    private static final Map<String, String> headLayer = new HashMap<>();   // our layer path -> the one in use
+    private static final Map<String, String> makeupFor = new HashMap<>();   // game makeup file (lower case) -> head's path, or ""
+    private static volatile String[] makeupNames;                            // the game's makeup files (lower case)
     private static final Object MISSING = new Object();
     private static int logged;
 
@@ -148,6 +160,94 @@ final class FaceLayer {
         return tex != null && (Boolean) texReady.invoke(tex) && !(Boolean) texFailure.invoke(tex);
     }
 
+    private static volatile int headGen = -1;
+
+    /** the head choice changed (Head): forget the layers and makeup found for the old one */
+    private static void headChanged() {
+        int g = Head.generation();
+        if (g == headGen) return;
+        synchronized (headLayer) { headLayer.clear(); }
+        synchronized (makeupFor) { makeupFor.clear(); }
+        headGen = g;
+    }
+
+    /** the layer to draw for our layer path: the chosen head's (RBSHeadFace[/id]) when there is one */
+    private static String inUse(String layer) {
+        headChanged();
+        if (Head.none()) return layer;
+        synchronized (headLayer) {
+            String p = headLayer.get(layer);
+            if (p != null) return p;
+            String h = HEAD_DIR + Head.sub() + layer.substring(DIR.length());
+            p = exists(h) ? h : layer;
+            if (p != layer) RBSHook.log("face layer: a head mod's layer in use: " + h);
+            headLayer.put(layer, p);
+            return p;
+        }
+    }
+
+    /** the game's makeup files (lower-case names), from its MakeUp folder */
+    private static String[] makeupNames() {
+        String[] n = makeupNames;
+        if (n != null) return n;
+        java.util.List<String> list = new java.util.ArrayList<>();
+        try {
+            Object s = fsGetString.invoke(fileSystem, GAME_MAKEUP + "LipStick.png");
+            File dir = s instanceof String ? new File((String) s).getParentFile() : null;
+            File[] fs = dir == null ? null : dir.listFiles();
+            if (fs != null) for (File f : fs) {
+                String nm = f.getName().toLowerCase(java.util.Locale.ROOT);
+                if (nm.endsWith(".png")) list.add(nm);
+            }
+        } catch (Throwable t) {
+            warn("makeup list failed: " + t);
+        }
+        makeupNames = n = list.toArray(new String[0]);
+        return n;
+    }
+
+    /** the head mod's makeup for a game makeup file name (lower case), or null */
+    private static String headMakeup(String lowerName) {
+        headChanged();
+        if (Head.none()) return null;
+        String dir = HEAD_MAKEUP + Head.sub();
+        synchronized (makeupFor) {
+            String p = makeupFor.get(lowerName);
+            if (p == null) {
+                p = "";
+                for (String cand : new String[]{lowerName, original(lowerName)}) {
+                    if (cand != null && exists(dir + cand)) { p = dir + cand; break; }
+                }
+                makeupFor.put(lowerName, p);
+            }
+            return p.isEmpty() ? null : p;
+        }
+    }
+
+    /** the file name as the game spells it (LipStick.png), from its folder */
+    private static String original(String lowerName) {
+        try {
+            Object s = fsGetString.invoke(fileSystem, GAME_MAKEUP + "LipStick.png");
+            File dir = s instanceof String ? new File((String) s).getParentFile() : null;
+            File[] fs = dir == null ? null : dir.listFiles();
+            if (fs != null) for (File f : fs) if (f.getName().equalsIgnoreCase(lowerName)) return f.getName();
+        } catch (Throwable t) {
+            warn("makeup name failed: " + t);
+        }
+        return null;
+    }
+
+    /** a texture name of the game's makeup ("media/textures/Body/MakeUp/x.png", any case / slashes) -> "x.png" */
+    private static String makeupFile(String name) {
+        if (name == null) return null;
+        String n = name.replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
+        int i = n.lastIndexOf('/');
+        if (i < 0 || !n.substring(0, i).endsWith("makeup")) return null;   // "...Body/MakeUp/x" or "MakeUp/x"
+        String f = n.substring(i + 1);
+        if (f.isEmpty()) return null;
+        return f.endsWith(".png") ? f : f + ".png";
+    }
+
     /** after ModelInstanceTextureCreator.init(HumanVisual, ItemVisuals, ModelInstance) */
     @SuppressWarnings("unchecked")
     static void afterInit(Object creator) {
@@ -156,9 +256,18 @@ final class FaceLayer {
             Object data = fChrData.get(creator);
             String path = layerFor(data == null ? null : (String) fBaseTexture.get(data));
             if (path == null || !gameSkin(path)) return;
-            Object tex = texture(path);
+            Object tex = texture(inUse(path));
             if (tex == null || (Boolean) texFailure.invoke(tex)) return;
-            if (!(Boolean) texReady.invoke(tex)) ((List<Object>) fNotReady.get(creator)).add(tex);
+            List<Object> wait = (List<Object>) fNotReady.get(creator);
+            if (!(Boolean) texReady.invoke(tex)) wait.add(tex);
+            // a head mod's makeup: loaded here so the texture waits for it like for the game's own (the first build
+            // would otherwise draw the game's makeup and keep it)
+            for (String m : makeupNames()) {
+                String hp = headMakeup(m);
+                if (hp == null) continue;
+                Object mt = texture(hp);
+                if (mt != null && !(Boolean) texFailure.invoke(mt) && !(Boolean) texReady.invoke(mt)) wait.add(mt);
+            }
         } catch (Throwable t) {
             warn("face layer (init) failed: " + t);
         }
@@ -175,9 +284,22 @@ final class FaceLayer {
             if (skin == null) return;
             String path = layerFor((String) texName.invoke(skin));
             if (path == null || !gameSkin(path)) return;
-            Object tex = texture(path);
+            Object tex = texture(inUse(path));
             if (!usable(tex)) return;
-            for (Object c : cmds) if (fCmdTex.get(c) == tex) return;
+            swapMakeup(cmds);
+            // a face layer already there: this one, or another head's (the choice changed while the character's
+            // texture was kept) - that one is given this layer, so two faces are never drawn one over the other
+            boolean have = false;
+            for (Object c : cmds) {
+                Object ct = fCmdTex.get(c);
+                if (ct == tex) { have = true; continue; }
+                if (ct != null && faceLayerName((String) texName.invoke(ct))) {
+                    fCmdTex.set(c, tex);
+                    have = true;
+                    if (relayers++ < 3) RBSHook.log("face layer: " + texName.invoke(ct) + " -> " + texName.invoke(tex) + " (the head was switched)");
+                }
+            }
+            if (have) return;
             smartAdd.invoke(smart, tex);                       // a plain alpha-blended layer, appended ...
             Object c = cmds.remove(cmds.size() - 1);
             cmds.add(1, c);                                    // ... moved right after the skin
@@ -190,6 +312,57 @@ final class FaceLayer {
         } catch (Throwable t) {
             warn("face layer failed: " + t);
         }
+    }
+
+    /** the game's makeup layers -> the head mod's (ready ones only; a missing file keeps the game's). One already
+     *  moved for another head (in its own folder: the choice changed since) -> this head's, or the game's own file
+     *  when the game's face is chosen */
+    private static void swapMakeup(List<Object> cmds) throws Exception {
+        for (Object c : cmds) {
+            Object t = fCmdTex.get(c);
+            if (t == null) continue;
+            String name = (String) texName.invoke(t);
+            String f = makeupFile(name);
+            boolean moved = false;
+            if (f == null) {
+                f = headMakeupFile(name);
+                moved = f != null;
+            }
+            if (f == null) continue;
+            String hp = headMakeup(f);
+            if (hp == null) {
+                if (!moved) continue;
+                String g = original(f);
+                Object gt = texture(GAME_MAKEUP + (g != null ? g : f));
+                if (usable(gt)) fCmdTex.set(c, gt);
+                continue;
+            }
+            Object ht = texture(hp);
+            if (ht == t) continue;
+            if (usable(ht)) {
+                fCmdTex.set(c, ht);
+                if (swaps++ < 3) RBSHook.log("face layer: makeup " + texName.invoke(t) + " -> " + hp);
+            }
+        }
+    }
+
+    private static int swaps, relayers;
+
+    /** one of the face layers: ours (RBSFace) or a head's (RBSHeadFace[/id]) */
+    private static boolean faceLayerName(String name) {
+        if (name == null) return false;
+        String n = name.replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
+        return n.contains("rbsface/") || n.contains("rbsheadface/");
+    }
+
+    /** a head's moved makeup ("media/textures/RBSHeadMakeUp/<id>/x.png") -> "x.png" (lower case), else null */
+    private static String headMakeupFile(String name) {
+        if (name == null) return null;
+        String n = name.replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
+        if (!n.contains("rbsheadmakeup/")) return null;
+        String f = n.substring(n.lastIndexOf('/') + 1);
+        if (f.isEmpty()) return null;
+        return f.endsWith(".png") ? f : f + ".png";
     }
 
     private static void warn(String s) {

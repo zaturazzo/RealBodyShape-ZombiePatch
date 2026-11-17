@@ -256,7 +256,7 @@ final class Height {
     }
 
     /** who called UpdateSkinTransforms / transformRootChildBones this time (for the log; our own frames left out) */
-    private static String caller() {
+    static String caller() {
         StringBuilder b = new StringBuilder();
         int shown = 0;
         for (StackTraceElement e : new Throwable().getStackTrace()) {

@@ -200,6 +200,7 @@ final class Jiggle {
         Object[] out;
         Object slot, slot2, slot3;      // slot3: the hair's springs (Hair.SLOT)
         Object slot4;                   // the weather (Env.SLOT)
+        Object slot5, slot6;            // the eyes: this character's (Eyes.SLOT), the head's (Eyes.SLOT_HEAD)
     }
 
     // ---------------- models: which ones draw with the shader ----------------
@@ -394,6 +395,10 @@ final class Jiggle {
             System.arraycopy(tr, 0, out, 0, tr.length);
             if (tr.length <= Hair.SLOT) out[Hair.SLOT] = Hair.slot(player, pad);   // identity unless its hair sways
             if (tr.length <= Env.SLOT) out[Env.SLOT] = Env.slot(player, pad);      // the wind (not used by a shader yet)
+            if (tr.length <= Eyes.SLOT_HEAD) {                  // eyeballs (a head mod's): identity without one
+                out[Eyes.SLOT_HEAD] = Eyes.headSlot(pad);
+                out[Eyes.SLOT] = z[0] == 3 ? identity : Eyes.slot(player, pad);    // another player: a variant body, no eyeballs
+            }
             State s = enabled ? states.get(player) : null;
             // a mesh in a space of its own (another mod's FBX, x100, Z up): the shader's rows are in the game's space and
             // threw its sleeves about (user, 2026-11-11) - they are converted to its space, so it bounces like the rest

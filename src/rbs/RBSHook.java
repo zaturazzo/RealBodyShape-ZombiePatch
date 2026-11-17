@@ -56,6 +56,15 @@ public final class RBSHook {
     private static volatile int cfgVersion;
     /** visual -> {variant, cfgVersion}: the outfit and a corpse's stored body do not change */
     private static final Map<Object, int[]> variantCache = Collections.synchronizedMap(new WeakHashMap<>());
+    /** looks hash -> the body a zombie or corpse with those looks got this session (for copies that carry neither
+     *  their line of work nor their corpse's stored body); a bounded table */
+    @SuppressWarnings("serial")
+    private static final Map<Integer, Integer> bodyByLooks = Collections.synchronizedMap(new java.util.LinkedHashMap<Integer, Integer>(256, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Integer, Integer> e) { return size() > 8192; }
+    });
+    private static Class<?> chrClass;
+    private static int copyLogs;
     private static java.lang.reflect.Field fVisualOwner;
     private static Class<?> deadBodyClass;
     private static volatile boolean ownerFailed;
@@ -174,14 +183,62 @@ public final class RBSHook {
     }
 
     public static void afterUpdateSkinTransforms(Object player) {
+        if (!enter(player)) return;
         try {
-            Height.apply(player);
-        } catch (Throwable e) {
-            warn("zombie height failed: " + why(e));
+            try {
+                Height.apply(player);
+            } catch (Throwable e) {
+                warn("zombie height failed: " + why(e));
+            }
+            HeadLook.update(player);
+            Jiggle.update(player);
+            Hair.update(player);                               // after the head look: the tie follows the turned head
+        } finally {
+            leave(player);
         }
-        HeadLook.update(player);
-        Jiggle.update(player);
-        Hair.update(player);                                   // after the head look: the tie follows the turned head
+    }
+
+    // ---------------- never inside ourselves for the same character ----------------
+    // Lulu, 2026-11-17: with Project Viewpoint 0.1.7 far zombies lay as a ball on the ground and 4 of them took the game
+    // from 200 to 20 fps. Viewpoint poses zombies itself and writes a pose into the bone matrices only when something
+    // reads them; writing it, it calls UpdateSkinTransforms, and only after that marks the pose written. Our hook after
+    // UpdateSkinTransforms reads the bones (Height, the jiggle), so Viewpoint wrote the pose again and called
+    // UpdateSkinTransforms again: us again, round and round to a stack overflow, every zombie it posed, every frame
+    // (6.7: each round stretched the pose once more - the ball). A call for a character we are already in on this thread
+    // returns at once now: the pose it wrote is the one the outer call then stretches, once.
+    private static final ThreadLocal<Object[]> INSIDE = ThreadLocal.withInitial(() -> new Object[4]);
+    private static boolean turnedAwaySaid;
+
+    /** false if we are already in our hook for this character on this thread (or four deep): leave it alone */
+    private static boolean enter(Object player) {
+        Object[] in = INSIDE.get();
+        int free = -1;
+        for (int i = 0; i < in.length; i++) {
+            if (in[i] == player) return turnAway();
+            if (in[i] == null && free < 0) free = i;
+        }
+        if (free < 0) return turnAway();
+        in[free] = player;
+        return true;
+    }
+
+    private static void leave(Object player) {
+        Object[] in = INSIDE.get();
+        for (int i = 0; i < in.length; i++) {
+            if (in[i] == player) {
+                in[i] = null;
+                return;
+            }
+        }
+    }
+
+    private static boolean turnAway() {
+        if (!turnedAwaySaid) {
+            turnedAwaySaid = true;
+            log("a pose update from inside our own one for the same character (another mod writing the pose as it is"
+                    + " read): left to the outer one. Called from: " + Height.caller());
+        }
+        return false;
     }
 
     // ---------------- AnimationPlayer.transformRootChildBones(bone, rotation) ----------------
@@ -192,12 +249,17 @@ public final class RBSHook {
     }
 
     public static void afterRootChildBones(Object player) {
+        if (!enter(player)) return;
         try {
-            Height.apply(player);
-        } catch (Throwable e) {
-            warn("zombie height (turn) failed: " + why(e));
+            try {
+                Height.apply(player);
+            } catch (Throwable e) {
+                warn("zombie height (turn) failed: " + why(e));
+            }
+            HeadLook.reapply(player);
+        } finally {
+            leave(player);
         }
-        HeadLook.reapply(player);
     }
 
     // ---------------- AnimatedModel.getAnimationPlayer() ----------------
@@ -687,18 +749,53 @@ public final class RBSHook {
      * split by the stable hash of its looks.
      */
     static int variantOfVisual(Object visual) throws Exception {
+        // the looks are checked every time: a visual can be filled anew - the game reuses zombies, and DeadBodyAtlas
+        // draws every corpse through one AnimatedModel whose own visual is a copy of each corpse in turn (keyed by the
+        // visual alone, those corpses all got the first one's body: zombies changed body, height and clothes when they
+        // died and became part of the atlas, 2026-11-17)
+        int h = visualHash(visual);
         int[] c = variantCache.get(visual);
         int ver = cfgVersion;
-        if (c != null && c[1] == ver) return c[0];
+        if (c != null && c[1] == ver && c[2] == h) return c[0];
         Object owner = ownerOf(visual);
-        int v = -1;
-        if (owner != null && deadBodyClass != null && deadBodyClass.isInstance(owner)) v = storedVariant(owner);
+        boolean corpse = owner != null && deadBodyClass != null && deadBodyClass.isInstance(owner);
+        int v = corpse ? storedVariant(owner) : -1;
         if (v < 0) {
-            boolean female = (Boolean) vIsFemale.invoke(visual);
-            v = variant(visualHash(visual), weightsFor(female, outfitOf(owner)));
+            // the line of work from the visual itself (a copy carries it; its owner - an AnimatedModel - has none),
+            // else from the owner. Neither (a corpse of an earlier session, drawn from a copy): the body this session
+            // already saw with these looks, if any
+            String outfit = outfitOfVisual(visual);
+            if (outfit == null) outfit = outfitOf(owner);
+            Integer seen = outfit == null && !corpse ? bodyByLooks.get(h) : null;
+            if (seen != null) v = seen;
+            else {
+                boolean female = (Boolean) vIsFemale.invoke(visual);
+                v = variant(h, weightsFor(female, outfit));
+            }
+            boolean copy = !corpse && !(chrClass != null && chrClass.isInstance(owner));
+            if (copy && copyLogs < 6) {
+                copyLogs++;
+                Integer before = bodyByLooks.get(h);
+                log("zombie body: a corpse drawn from a copy of its looks (" + (owner == null ? "no owner" : owner.getClass().getSimpleName())
+                        + ") - " + NAMES[v] + (seen != null ? ", the body seen with these looks this session"
+                        : outfit != null ? ", by its line of work '" + outfit + "'" : ", by its sex (no line of work, not seen this session)")
+                        + (before != null && before != v ? " - NOT the " + NAMES[before] + " it had" : ""));
+            }
         }
-        variantCache.put(visual, new int[]{ v, ver });
+        if (corpse || chrClass != null && chrClass.isInstance(owner)) bodyByLooks.put(h, v);
+        variantCache.put(visual, new int[]{ v, ver, h });
         return v;
+    }
+
+    /** the outfit's name of a visual (in memory: a corpse loaded from a save has none), or null */
+    private static String outfitOfVisual(Object visual) {
+        try {
+            Object o = vOutfit.invoke(visual);
+            Object n = o == null ? null : outfitName.invoke(o);
+            return n == null ? null : n.toString();
+        } catch (Throwable e) {
+            return null;
+        }
     }
 
     private static int[] weightsFor(boolean female, String outfit) {
@@ -720,6 +817,7 @@ public final class RBSHook {
                 java.lang.reflect.Field f = Class.forName("zombie.core.skinnedmodel.visual.HumanVisual", false, cl).getDeclaredField("owner");
                 f.setAccessible(true);
                 deadBodyClass = Class.forName("zombie.iso.objects.IsoDeadBody", false, cl);
+                chrClass = Class.forName("zombie.characters.IsoGameCharacter", false, cl);
                 fVisualOwner = f;
             }
             return fVisualOwner.get(visual);

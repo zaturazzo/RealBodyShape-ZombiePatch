@@ -21,6 +21,16 @@ this patch adds them:
 - **Other players in multiplayer (v6.7):** each player's weight is passed on through the server, and the other
   players get the body nearest to it (thin, normal, fat or obese, the zombies' bodies), clothes that follow it and a
   belly that bounces by their weight. Before, everyone of your sex wore your own shape.
+- **Hair sway (v6.8):** with the optional mod *Real Body Shape - Hair Sway* (in the Workshop item from 0.3.9), the
+  loose ends of its hairstyles sway as your character walks, runs and turns, and hang with gravity.
+- **Animations carry on (v6.8):** when the body changes with weight and the game reloads the model, the animations
+  go on instead of starting over (no jerk, no stuck sitting pose).
+- **Sandbox options (v6.8, mod 0.3.9+):** Zombie Bodies takes its chances (by sex and by line of work) and its
+  heights from the Sandbox options.
+- **Fixes (v6.8):** a zombie stretched to a giant height when another mod updated its pose more than once; zombies
+  changing body, height or clothes when they died; far zombies scrunched into a ball with heavy lag since Project
+  Viewpoint's latest update (in Viewpoint's first / third person views the bounce and the hair sway don't show: it
+  draws characters with its own shader).
 
 > **Using ZombieBuddy?** You do not need this download. The Workshop item contains the same patch as a ZombieBuddy
 > Java mod: enable **Real Body Shape - zombie patch through ZombieBuddy** in the mod list and you are done
@@ -44,7 +54,7 @@ this patch adds them:
 ## 1. Requirements
 
 - Windows, Steam version of Project Zomboid **Build 42** (developed on 42.21).
-- The **Real Body Shape** Workshop item, version **0.3.4 or newer** (the physics needs the shader it ships). It
+- The **Real Body Shape** Workshop item, version **0.3.4 or newer** (the physics needs the shader it ships; 0.3.9 for the hair sway and the Sandbox options). It
   contains four mods: **Real Body Shape**, **Real Body Shape - Zombie Bodies** (zombie body variants and heights),
   **Real Body Shape - Zombie Dismemberment** (optional: missing limbs) and **Real Body Shape - zombie patch through
   ZombieBuddy** (only for ZombieBuddy users, see above). With this download, enable the first two, and the third if

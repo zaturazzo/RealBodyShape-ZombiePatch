@@ -57,6 +57,10 @@ final class Hair {
     /** the game's skeleton (mesh units, bind pose): where a ponytail is tied and the skull's centre, from the head
      *  joint; how far a piece may swing in towards the head / neck */
     static final float TIE_UP = 0.080f, TIE_BACK = 0.067f, SKULL_UP = 0.077f, SKULL_FWD = 0.013f, SKULL_R = 0.074f;
+    /** the same for men (2026-11-16, men's styles): the same skeleton, but the male head is bigger and sits higher and
+     *  further back (skull centre 0.9083 / z 0.025 against 0.9015 / 0.0177, the vanilla ponytail's root 1 cm higher);
+     *  the shader is told by the slot's marker (MAGIC + 0.5) and keeps the hair behind the male neck / upper back */
+    static final float TIE_UP_M = 0.093f, TIE_BACK_M = 0.072f, SKULL_UP_M = 0.084f, SKULL_FWD_M = 0.004f, SKULL_R_M = 0.078f;
     /** how much of the way the tail follows gravity at 100 % (gravity_sim.py) */
     static final float GRAVITY = 0.85f;
     /** a hit (the reaction starts) and landing on the floor: the change of speed given to the springs (m/s) */
@@ -77,6 +81,7 @@ final class Hair {
         float wind;                 // the air's tilt of 'down' now
         boolean hit, floor;         // last time: in a hit reaction, on the floor
         boolean tied;               // a ponytail: its hair bends about the tie, other styles about the skull's centre
+        boolean male;               // a man's head: his tie, skull and neck (the shader's marker)
     }
 
     /** the animation skeleton's head, offset and bind-pose frame */
@@ -84,7 +89,10 @@ final class Hair {
         int head;
         Object offset;
         float L;
-        float[] fw, up, left, tie, skull;
+        float[] fw, up, left, tie, skull, tieM, skullM;
+
+        float[] tie(State s) { return s.male ? tieM : tie; }
+        float[] skull(State s) { return s.male ? skullM : skull; }
     }
 
     private static final Map<Object, State> states = Collections.synchronizedMap(new WeakHashMap<>());
@@ -172,6 +180,7 @@ final class Hair {
             }
             long[] we = wears.get(chr);
             s.tied = we != null && we.length > 2 && we[2] == 1;
+            s.male = we != null && we.length > 3 && we[3] == 1;
             step(s, f, player, chr);
         } catch (Throwable t) {
             if (warns++ < 5) RBSHook.warn("hair (spring) failed: " + t);
@@ -203,7 +212,13 @@ final class Hair {
             ours = hs.startsWith("sbj_");
             tied = hs.contains("ponytail") || hs.contains("bun");
         }
-        wears.put(chr, new long[]{ ours ? 1 : 0, now + 1_000_000_000L, tied ? 1 : 0 });
+        boolean male = false;
+        try {
+            male = !(Boolean) Jiggle.chrFemale.invoke(chr);
+        } catch (Throwable t) {
+            male = false;
+        }
+        wears.put(chr, new long[]{ ours ? 1 : 0, now + 1_000_000_000L, tied ? 1 : 0, male ? 1 : 0 });
         return ours;
     }
 
@@ -231,9 +246,13 @@ final class Hair {
                 f.left = cross(f.fw, f.up);                     // forward = up x left
                 f.tie = new float[3];
                 f.skull = new float[3];
+                f.tieM = new float[3];
+                f.skullM = new float[3];
                 for (int c = 0; c < 3; c++) {
                     f.tie[c] = H[c] + f.up[c] * TIE_UP - f.fw[c] * TIE_BACK;
                     f.skull[c] = H[c] + f.up[c] * SKULL_UP + f.fw[c] * SKULL_FWD;
+                    f.tieM[c] = H[c] + f.up[c] * TIE_UP_M - f.fw[c] * TIE_BACK_M;
+                    f.skullM[c] = H[c] + f.up[c] * SKULL_UP_M + f.fw[c] * SKULL_FWD_M;
                 }
             }
         }
@@ -250,7 +269,7 @@ final class Hair {
         Jiggle.read(f.offset, o);
         boolean cm = cv(m), co = cv(o);
         // the tie in model space (the head's pose now: head look and animation included), then in the world
-        float[] tm = xf(m, cm, xf(o, co, f.tie, 1f), 1f);
+        float[] tm = xf(m, cm, xf(o, co, f.tie(s), 1f), 1f);
         float k = TORSO_M / f.L;
         float lf = dot(tm, f.fw) * k, ll = dot(tm, f.left) * k, lu = dot(tm, f.up) * k;
         Object fwd = Jiggle.chrForward.invoke(chr);
@@ -381,13 +400,14 @@ final class Hair {
             r[base + 1] = dot(r1, d) / Math.max(dot(r1, r1), 1e-8f);
             r[base + 2] = dot(r2, d) / Math.max(dot(r2, r2), 1e-8f);
         }
-        r[3] = MAGIC;
+        r[3] = s.male ? MAGIC + 0.5f : MAGIC;              // the shader: 57 a woman's head and neck, 57.5 a man's
         r[7] = s.wind;                                     // the air: 'down' tilts back this much
-        r[8] = f.skull[0];
-        r[9] = f.skull[1];
-        r[10] = f.skull[2];
-        r[11] = SKULL_R;
-        float[] pivot = s.tied ? f.tie : f.skull;          // what the hanging pieces bend about with gravity
+        float[] skull = f.skull(s);
+        r[8] = skull[0];
+        r[9] = skull[1];
+        r[10] = skull[2];
+        r[11] = s.male ? SKULL_R_M : SKULL_R;
+        float[] pivot = s.tied ? f.tie(s) : skull;         // what the hanging pieces bend about with gravity
         r[12] = pivot[0];
         r[13] = pivot[1];
         r[14] = pivot[2];

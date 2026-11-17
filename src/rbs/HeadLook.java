@@ -106,6 +106,17 @@ final class HeadLook {
         float rx, ry, rfx, rfy;
         long stillSince;
         boolean hasRef, idle;
+        // for the eyes (Eyes): the whole angle to what it looks at (the head turns part of it), and whether it aims
+        float tYaw, tPitch;
+        boolean has, aim;
+    }
+
+    /** {head yaw, head pitch, target yaw, target pitch, has a target (1/0), aiming (1/0)} of a player's head look
+     *  (radians, + yaw = to the character's left, + pitch = up), or null when it has none */
+    static float[] lookOf(Object player) {
+        State s = player == null ? null : states.get(player);
+        if (s == null || s.zombie) return null;
+        return new float[]{ s.yaw, s.pitch, s.tYaw, s.tPitch, s.has ? 1f : 0f, s.aim ? 1f : 0f };
     }
 
     // ---------------- hook ----------------
@@ -137,9 +148,16 @@ final class HeadLook {
             boolean free = free(chr);
             boolean aim = free && (Boolean) aiming.invoke(chr);
             boolean sees = false;
+            s.has = false;
+            s.aim = aim;
             if (free) sees = target(chr, want, s, aim ? (gun(chr) ? AIM_CONE : MELEE_CONE) : BEHIND);
             else s.why = "busy";
             s.idle = idleLook(chr, s, now, want, !free || aim || sees);
+            if (s.idle) {                                       // the camera: the eyes look all the way
+                s.tYaw = want[0];
+                s.tPitch = CAM_PITCH;
+                s.has = true;
+            }
             float tau = s.idle ? TAU_IDLE : (want[0] != 0f || want[1] != 0f) ? TAU_TO : TAU_BACK;
             s.yaw = approach(s.yaw, want[0], dt, tau);
             s.pitch = approach(s.pitch, want[1], dt, tau);
@@ -338,12 +356,18 @@ final class HeadLook {
         if (best < range) {
             out[0] = Math.max(-MAX_YAW, Math.min(MAX_YAW, yaw));
             out[1] = Math.max(-MAX_PITCH_DOWN, Math.min(MAX_PITCH_UP, PITCH_SHARE * pitch));
+            s.tYaw = yaw;
+            s.tPitch = pitch;
+            s.has = true;
             s.why = String.format(Locale.ROOT, "%s%s %.1f tiles, %.0f deg %s", aimed ? (cone == AIM_CONE ? "aiming at " : "stance, ") : "",
                     crawl ? "crawler" : "zombie", best, Math.toDegrees(Math.abs(yaw)), yaw >= 0 ? "left" : "right");
             return true;
         } else if (aimed && bestOut < GLANCE_RANGE) {
             out[0] = Math.max(-GLANCE_MAX, Math.min(GLANCE_MAX, GLANCE * yawOut));
             out[1] = Math.max(-MAX_PITCH_DOWN, Math.min(MAX_PITCH_UP, GLANCE * PITCH_SHARE * pitchOut));
+            s.tYaw = yawOut;                                    // a glance: the eyes go further than the head
+            s.tPitch = pitchOut;
+            s.has = true;
             s.why = String.format(Locale.ROOT, "%s, glance at a %s %.1f tiles, %.0f deg %s", cone == AIM_CONE ? "aiming" : "stance",
                     crawlOut ? "crawler" : "zombie", bestOut, Math.toDegrees(Math.abs(yawOut)), yawOut >= 0 ? "left" : "right");
             return true;
