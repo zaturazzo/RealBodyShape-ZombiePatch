@@ -27,6 +27,9 @@ this patch adds them:
   go on instead of starting over (no jerk, no stuck sitting pose).
 - **Sandbox options (v6.8, mod 0.3.9+):** Zombie Bodies takes its chances (by sex and by line of work) and its
   heights from the Sandbox options.
+- **Two-handed grip (v6.8):** with a two-handed melee weapon the left hand stays on the handle while swinging: the
+  game's swings (shared with the bat) let it slip off, up to 15 cm. The grip is taken from the guard stance and the
+  left arm bent back to it during the attack; where a swing reaches further than the arm can, it lets go as before.
 - **Fixes (v6.8):** a zombie stretched to a giant height when another mod updated its pose more than once; zombies
   changing body, height or clothes when they died; far zombies scrunched into a ball with heavy lag since Project
   Viewpoint's latest update (in Viewpoint's first / third person views the bounce and the hair sway don't show: it

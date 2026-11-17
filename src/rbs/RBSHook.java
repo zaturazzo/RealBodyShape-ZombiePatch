@@ -191,6 +191,7 @@ public final class RBSHook {
                 warn("zombie height failed: " + why(e));
             }
             HeadLook.update(player);
+            GripIK.update(player);                             // the left hand back on a two-handed weapon
             Jiggle.update(player);
             Hair.update(player);                               // after the head look: the tie follows the turned head
         } finally {
@@ -257,6 +258,7 @@ public final class RBSHook {
                 warn("zombie height (turn) failed: " + why(e));
             }
             HeadLook.reapply(player);
+            GripIK.reapply(player);
         } finally {
             leave(player);
         }

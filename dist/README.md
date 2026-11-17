@@ -5,7 +5,8 @@ contains *Real Body Shape*, *Real Body Shape - Zombie Bodies*, *Real Body Shape 
 *Real Body Shape - zombie patch through ZombieBuddy* and a few more optional mods.
 - New in v6.8 (with Real Body Shape 0.3.9): the hairstyles of the optional mod *Real Body Shape - Hair Sway* sway
   as your character moves; animations carry on when the body changes with weight (no jerk, no stuck sitting pose);
-  Zombie Bodies takes its chances by sex and line of work, and its heights, from the Sandbox options. Fixed: a zombie
+  Zombie Bodies takes its chances by sex and line of work, and its heights, from the Sandbox options; the left hand
+  stays on a two-handed melee weapon while swinging. Fixed: a zombie
   stretched to a giant height, zombies changing body, height or clothes when they died, and far zombies scrunched
   into a ball with heavy lag since Project Viewpoint's latest update.
 - Head look: your character turns their head toward the nearest zombie in sight; zombies chasing you look at you;
