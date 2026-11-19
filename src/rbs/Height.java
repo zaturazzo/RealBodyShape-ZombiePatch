@@ -297,17 +297,94 @@ final class Height {
             if (RBSHook.isLiveZombie(chr)) {
                 Object visual = RBSHook.visualOf(chr);
                 if (visual != null) {
-                    k = factorOf(RBSHook.visualHash(visual));
-                    if (e == null && diag++ < 10) RBSHook.log(String.format(Locale.ROOT, "height: zombie x%.3f", k));
+                    // another mod's NPC / companion: the height it got when first seen (the usual roll), remembered by
+                    // the looks that mod gives it (RBSHook.npcHash) - the skin / body hair indexes are new on every
+                    // zombie it spawns for the same companion (Stay With Me: short one day, tall the next; user,
+                    // 2026-11-18: "just remember the value"); its corpse, drawn from a copy, finds it in npcByLooks
+                    // A height the Lua chose for it (RBS_HeightSet: kept with the NPC's weight, RealBodyShape.npcSetHeight)
+                    // comes first; the height used is written back as RBS_Height for the Lua to keep
+                    boolean npc = RBSHook.isNpc(chr);
+                    int hash = RBSHook.visualHash(visual);
+                    if (npc) {
+                        double set = RBSHook.modDataNumber(chr, HEIGHT_SET_KEY);
+                        k = set >= 0.5 && set <= 1.5 ? set : rememberedHeight(RBSHook.npcHash(visual), factorOf(hash));
+                        RBSHook.setModDataNumber(chr, HEIGHT_KEY, Math.round(k * 10000) / 10000.0);
+                        npcByLooks.put(hash, k);
+                        NpcHeads.noteHeight(visual, k);                 // its info window's preview: the same height
+                    } else {
+                        k = factorOf(hash);
+                    }
+                    if (e == null && diag++ < 10) RBSHook.log(String.format(Locale.ROOT, "height: %s x%.3f", npc ? "another mod's NPC" : "zombie", k));
                 }
             }
             byChar.put(chr, new long[]{ Double.doubleToLongBits(k), now + 2_000_000_000L });
             return k;
         }
         Object visual = Limbs.animatedVisual(player);       // corpse in DeadBodyAtlas
-        if (visual == null || !RBSHook.isZombieVisual(visual)) return 1;
-        return factorOf(RBSHook.visualHash(visual));
+        if (visual == null) return 1;
+        if (!RBSHook.isZombieVisual(visual)) {
+            // a UI preview of another mod's NPC (its info window): that NPC's height; any other preview as it is
+            Double k = NpcHeads.previewOf(visual) != null ? NpcHeads.heightOf(visual) : null;
+            return k != null ? k : 1;
+        }
+        int hash = RBSHook.visualHash(visual);
+        Double npc = npcByLooks.get(hash);
+        return npc != null ? npc : factorOf(hash);
     }
+
+    /** the heights of other mods' NPCs, kept between sessions: ~/Zomboid/Lua/RealBodyShape_npc_heights.txt, one line
+     *  "&lt;npcHash&gt;=&lt;factor&gt;" each (a companion keeps the height it had the first time; the file can be deleted) */
+    static final String NPC_FILE = "RealBodyShape_npc_heights.txt";
+    /** NPC ModData: the height the Lua chose (0.5..1.5, read) and the one in use (written) */
+    static final String HEIGHT_SET_KEY = "RBS_HeightSet", HEIGHT_KEY = "RBS_Height";
+    static final int NPC_KEEP = 500;                   // the oldest lines go past this many
+    private static java.util.LinkedHashMap<Integer, Double> npcHeights;
+    static Path npcFile = Paths.get(System.getProperty("user.home"), "Zomboid", "Lua", NPC_FILE);
+
+    static synchronized double rememberedHeight(int key, double first) {
+        if (npcHeights == null) {
+            npcHeights = new java.util.LinkedHashMap<>();
+            try {
+                if (Files.isRegularFile(npcFile)) {
+                    for (String line : Files.readAllLines(npcFile, StandardCharsets.UTF_8)) {
+                        int eq = line.indexOf('=');
+                        if (eq <= 0 || line.startsWith("#")) continue;
+                        try {
+                            double v = Double.parseDouble(line.substring(eq + 1).trim());
+                            if (v > 0.5 && v < 1.5) npcHeights.put(Integer.parseInt(line.substring(0, eq).trim()), v);
+                        } catch (NumberFormatException ignored) {
+                        }
+                    }
+                }
+                RBSHook.log("height: " + npcHeights.size() + " NPC / companion height(s) remembered from " + NPC_FILE);
+            } catch (Throwable t) {
+                RBSHook.log("height: could not read " + npcFile + " (" + t + ") - NPC heights start anew");
+            }
+        }
+        Double v = npcHeights.get(key);
+        if (v != null) return v;
+        npcHeights.put(key, first);
+        while (npcHeights.size() > NPC_KEEP) npcHeights.remove(npcHeights.keySet().iterator().next());
+        StringBuilder b = new StringBuilder("# Real Body Shape: the heights of other mods' NPCs / companions (by their looks). Delete to roll them again.\n");
+        for (Map.Entry<Integer, Double> e : npcHeights.entrySet())
+            b.append(e.getKey()).append('=').append(String.format(Locale.ROOT, "%.4f", e.getValue())).append('\n');
+        try {
+            Files.createDirectories(npcFile.getParent());
+            Files.write(npcFile, b.toString().getBytes(StandardCharsets.UTF_8));
+            RBSHook.log(String.format(Locale.ROOT, "height: a new NPC / companion - x%.3f, remembered (%d in %s)", first, npcHeights.size(), NPC_FILE));
+        } catch (Throwable t) {
+            RBSHook.log("height: could not write " + npcFile + " (" + t + ") - kept for this session only");
+        }
+        return first;
+    }
+
+    /** the height of another mod's NPC seen this session, by the usual hash of its looks (for its corpse) */
+    private static final Map<Integer, Double> npcByLooks = Collections.synchronizedMap(new java.util.LinkedHashMap<Integer, Double>(64, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Integer, Double> eldest) {
+            return size() > 256;
+        }
+    });
 
     /** bell-shaped 1 +/- spread from the visual hash (mixed apart from the body variant's own use of it) */
     static double factorOf(int hash) {

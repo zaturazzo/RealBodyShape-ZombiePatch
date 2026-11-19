@@ -29,7 +29,11 @@ import java.util.WeakHashMap;
  * Done on the model-space bone matrices right after the pose is made (like Height): the neck turns a third of the way,
  * the head the rest, each with everything below it in the skeleton (hats, glasses, hair are skinned to the head).
  * Only what is drawn changes: the game's own head look (sitting on furniture), vision cone and aiming are untouched,
- * and the head is left alone while the game turns it itself, in a vehicle, asleep, climbing or lying down.
+ * and the head is left alone while the game turns it itself, in a vehicle, asleep, climbing or lying down. During the
+ * player's own actions (a timed action other than walking there - eating, drinking, reading, first aid, dressing... -
+ * or an emote) it goes back straight and looks at nothing: the action's animation has the head (2026-11-18).
+ * A companion / NPC another mod drives on a zombie ("useless") is not looked at like a zombie: with no zombie in
+ * sight, not aiming and no action, the head glances at it now and then (NPC_LOOK seconds every NPC_GAP).
  * Zombies chasing a player turn their head to that player (user, 2026-11-07): only those that already have the player
  * as their target (an idle zombie's head never tells the player who has noticed them), never one faking death or
  * sitting against a wall, nor one knocked down, hit, climbing; at most Z_MAX_YAW to the side. A crawler, lying flat,
@@ -80,6 +84,10 @@ final class HeadLook {
     private static Method inVehicle, asleep, climbing, onFloor, dead, headLookAround, aiming, sneaking;
     private static Method zCrawling, zFakeDead, zSitWall, primaryItem, isRanged, zTarget, knockedDown, hitReaction;
     private static Method sitGround, sitFurniture, timedActions, performing;     // optional: null = not there
+    private static Method chrActions, varBool, zUseless;                         // optional: null = not there
+    /** BaseAction class -> its getMetaType() (LuaTimedActionNew: the Lua action's Type), or NO_TYPE */
+    private static final Map<Class<?>, Method> metaTypes = new java.util.concurrent.ConcurrentHashMap<>();
+    private static Method noType;
     private static Class<?> weaponClass;
 
     private static final Map<Object, Skel> skels = Collections.synchronizedMap(new WeakHashMap<>());
@@ -109,7 +117,31 @@ final class HeadLook {
         // for the eyes (Eyes): the whole angle to what it looks at (the head turns part of it), and whether it aims
         float tYaw, tPitch;
         boolean has, aim;
+        // a companion / NPC in sight (target() fills it): its angle, and the glances at it (System.nanoTime)
+        boolean npc;
+        float npcYaw, npcPitch;
+        long npcUntil, npcNext;
+        String mode = "";             // what the head did last (logged when it changes)
+        long modeLogAt;
     }
+
+    private static int modeLogs;
+
+    /** why the game has the player's head (free() is false), for the log */
+    private static String whyBusy(Object chr) {
+        try {
+            if (inVehicle.invoke(chr) != null) return "in a vehicle";
+            if ((Boolean) asleep.invoke(chr)) return "asleep";
+            if ((Boolean) climbing.invoke(chr)) return "climbing";
+            if ((Boolean) onFloor.invoke(chr)) return "on the floor";
+            if ((Boolean) dead.invoke(chr)) return "dead";
+            if ((Boolean) headLookAround.invoke(chr)) return "the game's own head look (sitting on furniture...)";
+        } catch (Throwable ignored) {}
+        return "?";
+    }
+
+    /** glances at a companion when no zombie is in sight: this long (s), then this long looking ahead (s) */
+    static final float NPC_LOOK_MIN = 1.5f, NPC_LOOK_MAX = 3.5f, NPC_GAP_MIN = 6f, NPC_GAP_MAX = 14f;
 
     /** {head yaw, head pitch, target yaw, target pitch, has a target (1/0), aiming (1/0)} of a player's head look
      *  (radians, + yaw = to the character's left, + pitch = up), or null when it has none */
@@ -146,19 +178,32 @@ final class HeadLook {
             s.t = now;
             float[] want = { 0f, 0f };
             boolean free = free(chr);
-            boolean aim = free && (Boolean) aiming.invoke(chr);
+            String act = free ? actionWithHead(chr) : null;     // eating, reading...: the head goes back straight
+            boolean aim = free && act == null && (Boolean) aiming.invoke(chr);
             boolean sees = false;
             s.has = false;
             s.aim = aim;
-            if (free) sees = target(chr, want, s, aim ? (gun(chr) ? AIM_CONE : MELEE_CONE) : BEHIND);
-            else s.why = "busy";
-            s.idle = idleLook(chr, s, now, want, !free || aim || sees);
+            if (free && act == null) sees = target(chr, want, s, aim ? (gun(chr) ? AIM_CONE : MELEE_CONE) : BEHIND);
+            else s.why = act != null ? "doing " + act + ": the head straight" : "busy";
+            s.idle = idleLook(chr, s, now, want, !free || act != null || aim || sees);
             if (s.idle) {                                       // the camera: the eyes look all the way
                 s.tYaw = want[0];
                 s.tPitch = CAM_PITCH;
                 s.has = true;
             }
-            float tau = s.idle ? TAU_IDLE : (want[0] != 0f || want[1] != 0f) ? TAU_TO : TAU_BACK;
+            // nothing else to look at (no zombie, not aiming, no action, not the camera): now and then a glance at a
+            // companion nearby (user, 2026-11-18: "ตอนว่างให้หันไปมองเพื่อนบ้างเป็นครั้งคราว ถ้ามีซอมบี้ให้มองซอมบี้ก่อน")
+            boolean glance = free && act == null && !aim && !sees && !s.idle && npcGlance(s, now, want);
+            // what the head does, in the log each time it changes (user, 2026-11-18: "it does not seem to turn to
+            // zombies" - the turn count stood still for minutes and nothing said why)
+            String mode = act != null ? "doing " + act : !free ? "busy: " + whyBusy(chr) : s.idle ? "the camera"
+                    : sees ? (aim ? "aiming, a zombie" : "a zombie") : glance ? "a companion" : aim ? "aiming" : "ahead";
+            if (!mode.equals(s.mode) && now >= s.modeLogAt) {   // at most twice a second, the latest one
+                s.mode = mode;
+                s.modeLogAt = now + 500_000_000L;
+                if (modeLogs++ < 400) RBSHook.log("head look now: " + mode + (sees || glance ? " (" + s.why + ")" : ""));
+            }
+            float tau = s.idle || glance ? TAU_IDLE : (want[0] != 0f || want[1] != 0f) ? TAU_TO : TAU_BACK;
             s.yaw = approach(s.yaw, want[0], dt, tau);
             s.pitch = approach(s.pitch, want[1], dt, tau);
             if (!free) {                                        // the game or the pose has the head: hand it back at once
@@ -289,6 +334,67 @@ final class HeadLook {
         return true;
     }
 
+    private static String noMetaType() {
+        return null;
+    }
+
+    /** a companion in sight (s.npc): look at it for a few seconds, then ahead for a while, again and again; true while
+     *  looking (want = its angle). The first glance comes a moment after it is seen. */
+    static boolean npcGlance(State s, long now, float[] want) {
+        if (!s.npc) {                                           // none in sight: the first glance 2 s after one is
+            s.npcUntil = 0;
+            s.npcNext = now + (long) 2e9;
+            return false;
+        }
+        java.util.concurrent.ThreadLocalRandom r = java.util.concurrent.ThreadLocalRandom.current();
+        if (now >= s.npcUntil && now >= s.npcNext) {            // time for another glance
+            s.npcUntil = now + (long) (r.nextDouble(NPC_LOOK_MIN, NPC_LOOK_MAX) * 1e9);
+            s.npcNext = s.npcUntil + (long) (r.nextDouble(NPC_GAP_MIN, NPC_GAP_MAX) * 1e9);
+        }
+        if (now >= s.npcUntil) return false;
+        want[0] = Math.max(-MAX_YAW, Math.min(MAX_YAW, s.npcYaw));
+        want[1] = Math.max(-MAX_PITCH_DOWN, Math.min(MAX_PITCH_UP, PITCH_SHARE * s.npcPitch));
+        s.tYaw = s.npcYaw;
+        s.tPitch = s.npcPitch;
+        s.has = true;
+        s.why = String.format(Locale.ROOT, "a glance at a companion, %.0f deg %s", Math.toDegrees(Math.abs(s.npcYaw)), s.npcYaw >= 0 ? "left" : "right");
+        return true;
+    }
+
+    /**
+     * What the player's own action is doing with the head, or null when nothing is: a timed action other than walking
+     * or finding the way there (eating, drinking, reading, smoking, first aid, dressing, crafting, reloading, moving
+     * items...: its animation looks at the hands) - its Lua Type - or an emote. The head goes back straight (smoothly)
+     * and looks at nothing, zombies, a companion or the camera (user, 2026-11-18: eating, the head kept turning to a
+     * zombie or the companion).
+     */
+    private static String actionWithHead(Object chr) {
+        try {
+            if (varBool != null && (Boolean) varBool.invoke(chr, "EmotePlaying")) return "an emote";
+            if (chrActions == null) return null;
+            List<?> q = (List<?>) chrActions.invoke(chr);
+            if (q == null || q.isEmpty()) return null;
+            Object a = q.get(0);
+            if (a == null) return null;
+            Method mt = metaTypes.get(a.getClass());
+            if (mt == null) {
+                try {
+                    mt = a.getClass().getMethod("getMetaType");
+                } catch (NoSuchMethodException e) {
+                    mt = noType;
+                }
+                metaTypes.put(a.getClass(), mt);
+            }
+            Object t = mt == noType ? null : mt.invoke(a);
+            String type = t == null ? a.getClass().getSimpleName() : t.toString();
+            String low = type.toLowerCase(Locale.ROOT);
+            if (low.contains("walk") || low.contains("pathfind")) return null;     // on the way there: free to look
+            return type;
+        } catch (Throwable e) {
+            return null;                                        // the queue changed under us: look as usual this pose
+        }
+    }
+
     /** sitting, or doing something (a timed action, an action animation): not "standing still" */
     private static boolean busy(Object chr) throws Exception {
         for (Method m : new Method[]{ sitGround, sitFurniture, timedActions, performing }) {
@@ -302,6 +408,7 @@ final class HeadLook {
     @SuppressWarnings("unchecked")
     private static boolean target(Object chr, float[] out, State s, float cone) throws Exception {
         boolean aimed = cone < BEHIND;
+        s.npc = false;
         Object cell = getCell.invoke(chr);
         List<Object> zs = cell == null ? null : (List<Object>) zombieList.invoke(cell);
         if (zs == null || zs.isEmpty()) {
@@ -320,6 +427,7 @@ final class HeadLook {
         // the nearest zombie within the cone (looked at), and while aiming / in a stance also the nearest close one
         // outside it (glanced at: the head turns part of the way, the eyes stay near the aim)
         float best = range, yaw = 0f, pitch = 0f, bestOut = aimed ? GLANCE_RANGE : 0f, yawOut = 0f, pitchOut = 0f;
+        float npcBest = range, npcYaw = 0f, npcPitch = 0f;      // the nearest companion in sight (glances only)
         boolean crawl = false, crawlOut = false;
         float eye = (Boolean) sneaking.invoke(chr) ? EYE_LOW : EYE;
         Object[] arr;
@@ -329,17 +437,28 @@ final class HeadLook {
         for (Object z : arr) {
             if (z == null || (Boolean) dead.invoke(z)) continue;
             float dx = ((Number) chrX.invoke(z)).floatValue() - px, dy = ((Number) chrY.invoke(z)).floatValue() - py;
-            float lim = Math.max(best, bestOut);
+            float lim = Math.max(Math.max(best, bestOut), npcBest);
             if (Math.abs(dx) > lim || Math.abs(dy) > lim) continue;
             if (Math.abs(((Number) chrZ.invoke(z)).floatValue() - pz) > 0.5f) continue;   // another floor
             float d = (float) Math.sqrt(dx * dx + dy * dy);
             if (d < 0.3f) continue;
             float a = (float) Math.atan2(YAW_SIGN * (dx * fy - dy * fx), dx * fx + dy * fy);
+            // a companion / NPC another mod drives on a zombie (Stay With Me: "useless", it does not attack by itself)
+            // follows the player everywhere: never looked at like a zombie - the head stayed turned to it (user,
+            // 2026-11-18) - only noted for the glances now and then when nothing else is to be looked at (npcGlance)
+            if (zUseless != null && (Boolean) zUseless.invoke(z)) {
+                if (!aimed && Math.abs(a) <= BEHIND && d < npcBest && ((Number) targetAlpha.invoke(z, pn)).floatValue() >= 0.5f) {
+                    npcBest = d;
+                    npcYaw = a;
+                    npcPitch = (float) Math.atan2(((Boolean) onFloor.invoke(z) ? CRAWLER : FACE) - eye, d);
+                }
+                continue;
+            }
             boolean in = Math.abs(a) <= cone;
             if (in ? d >= best : (Math.abs(a) > BEHIND || d >= bestOut)) continue;
             if (((Number) targetAlpha.invoke(z, pn)).floatValue() < 0.5f) continue;     // not seen by this player
             if ((Boolean) zFakeDead.invoke(z) || (Boolean) zSitWall.invoke(z)) continue;  // looks like a corpse
-            boolean c = (Boolean) zCrawling.invoke(z) || (Boolean) onFloor.invoke(z);
+            boolean c =(Boolean) zCrawling.invoke(z) || (Boolean) onFloor.invoke(z);
             float pt = (float) Math.atan2((c ? CRAWLER : FACE) - eye, d);
             if (in) {
                 best = d;
@@ -353,6 +472,9 @@ final class HeadLook {
                 pitchOut = pt;
             }
         }
+        s.npc = npcBest < range;
+        s.npcYaw = npcYaw;
+        s.npcPitch = npcPitch;
         if (best < range) {
             out[0] = Math.max(-MAX_YAW, Math.min(MAX_YAW, yaw));
             out[1] = Math.max(-MAX_PITCH_DOWN, Math.min(MAX_PITCH_UP, PITCH_SHARE * pitch));
@@ -649,6 +771,14 @@ final class HeadLook {
             sitFurniture = optional(playerClass, "isSittingOnFurniture");
             timedActions = optional(playerClass, "hasTimedActions");
             performing = optional(playerClass, "isPerformingAnAction");
+            try {
+                chrActions = igc.getMethod("getCharacterActions");
+                varBool = igc.getMethod("getVariableBoolean", String.class);
+            } catch (NoSuchMethodException e) {
+                RBSHook.log("head look: no action list in this game version - the head is not handed back during actions");
+            }
+            zUseless = optional(zombieClass, "isUseless");
+            noType = HeadLook.class.getDeclaredMethod("noMetaType");
             ready = true;
             RBSHook.log(String.format(Locale.ROOT, "head look ready - the player looks at the nearest zombie in sight within %.0f tiles (down at crawlers; aiming a gun: in the aim line; melee stance: in front)%s",
                     range, idleSec > 0f ? String.format(Locale.ROOT, "; standing still %.0f s: at the camera", idleSec) : ""));

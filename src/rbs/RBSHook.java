@@ -39,6 +39,7 @@ public final class RBSHook {
     private static volatile boolean ready, failed;
     private static Method isAnimal, isZombie, isSkeleton, chrVisual, getLoadedModel, getModelScript;
     private static Method vIsZombie, vIsSkeleton, vIsFemale, vSkin, vBodyHair, vHairModel, vBeardModel, vHairColor, vOutfit, outfitName;
+    private static Method vSkinName;                                     // optional: null = not there (npcHash: the index)
     private static Method cRedInt, cGreenInt, cBlueInt;
     private static Field fR, fG, fB, fFemaleModel, fMaleModel;
     private static Object scriptManager, modelManager;
@@ -304,6 +305,13 @@ public final class RBSHook {
     public static Object additionalShader(Object shader, Object mesh, Object chr) {
         try {
             boolean wearer = (zombiesEnabled() && Clean.isZombieWearer(chr)) || Jiggle.isPlayer(chr);
+            // our hair with no character: an AnimatedModel's - the character creation preview (a new game, or after a
+            // death: no character yet; user, 2026-11-19), the corpse atlas, a mannequin. It gets our hair's shader too,
+            // the shaders compiled first if nothing in the world did it yet (the main menu); only a UI preview gets
+            // springs (Hair.previewOf), the others' slot stays empty and the shader leaves their hair as it is
+            if (!wearer && chr == null && mesh != null && mesh.toString().toLowerCase(java.util.Locale.ROOT).contains(Hair.MARK)
+                    && Jiggle.ensureShaders())
+                return Jiggle.clothingShader(shader, mesh, true);
             return Jiggle.clothingShader(shader, mesh, wearer);
         } catch (Throwable t) {
             warn("zombie clothes shader failed: " + t);
@@ -580,10 +588,62 @@ public final class RBSHook {
         }
         keptBody.remove(chr);
         int v = variantOfVisual(visual);
-        Object m = variantModelOf(female, v);
+        Object m = zombieVariantModel(chr, female, v);
         if (m != null) tagVariant(chr, v);
         return m;
     }
+
+    /** the variant body a zombie wears: another mod's NPC the HD add-on's (when there), every other one the usual */
+    static Object zombieVariantModel(Object chr, boolean female, int v) throws Exception {
+        if (isNpc(chr)) {
+            Object visual = visualOf(chr);
+            Object h = npcModel(chr, visual, female, v);
+            if (h != null) return h;
+        }
+        return variantModelOf(female, v);
+    }
+
+    /** the HD body of an NPC (live, or its corpse: owner), with its head when it has one (NpcHeads); null = none */
+    static Object npcModel(Object owner, Object visual, boolean female, int v) throws Exception {
+        String head = NpcHeads.headOf(owner, visual, female);
+        Object h = head.isEmpty() ? null : hdHeadModelOf(v, head);
+        if (h == null) {
+            head = NpcHeads.NONE;
+            h = hdVariantModelOf(female, v);
+        }
+        if (visual != null && owner != null && isLiveZombie(owner)) NpcHeads.note(owner, visual, female, v, head);
+        return h;
+    }
+
+    /** a woman NPC's HD body with a local head (RBS_ZombieFemale_<Variant>_HD_<head>, zombie_hd.py), or null */
+    static Object hdHeadModelOf(int v, String head) throws Exception {
+        return hdModel("RBS_ZombieFemale_" + NAMES[v] + "_HD_" + head);
+    }
+
+    /**
+     * The HD add-on's variant body (RealBodyShape_HD, hd_mod/zombie_hd.py: model scripts RBS_Zombie<Sex>_<Variant>_HD,
+     * the Zombie Bodies variants subdivided like the player's HD body) for other mods' NPCs, or null when it is not
+     * there - looked for once (the scripts are loaded with the game). User, 2026-11-19: Stay With Me's companion was
+     * not HD in the world, while its info window (drawn from the player's own body file) was.
+     */
+    static Object hdVariantModelOf(boolean female, int v) throws Exception {
+        return hdModel("RBS_Zombie" + (female ? "Female" : "Male") + "_" + NAMES[v] + "_HD");
+    }
+
+    /** a model of the HD add-on by its script name (looked for once), or null */
+    private static Object hdModel(String base) throws Exception {
+        String name = hdScripts.get(base);
+        if (name == null) {
+            name = getModelScript.invoke(scriptManager, base) != null ? base
+                    : getModelScript.invoke(scriptManager, "Base." + base) != null ? "Base." + base : "";
+            hdScripts.put(base, name);
+            if (!name.isEmpty() && hdLogs++ < 2) log("zombie body: other mods' NPCs wear the HD add-on's bodies (" + name + ")");
+        }
+        return name.isEmpty() ? null : getLoadedModel.invoke(modelManager, name);
+    }
+
+    private static final Map<String, String> hdScripts = new java.util.concurrent.ConcurrentHashMap<>();
+    private static int hdLogs;
 
     /**
      * Another player in multiplayer: the variant body of their weight (Others), not the shared body this machine
@@ -663,7 +723,17 @@ public final class RBSHook {
         if (failed) return null;
         loadConfig();
         if (!enabled || visual == null || !visualClass.isInstance(visual)) return null;
-        if (!(Boolean) vIsZombie.invoke(visual)) return null;
+        if (!(Boolean) vIsZombie.invoke(visual)) {
+            // a UI preview of another mod's NPC (its info window): that NPC's body and head, not the player's file
+            Object[] p = NpcHeads.previewOf(visual);
+            if (p == null || !isSharedBody(orig)) return null;
+            boolean female = (Boolean) p[0];
+            int v = (Integer) p[1];
+            String head = (String) p[2];
+            Object h = head.isEmpty() ? null : hdHeadModelOf(v, head);
+            if (h == null) h = hdVariantModelOf(female, v);
+            return h != null ? h : variantModelOf(female, v);
+        }
         if ((Boolean) vIsSkeleton.invoke(visual)) return null;
         // only replace the shared body (forceModel / skeleton / animal results are returned by the original as-is)
         if (!isSharedBody(orig)) {
@@ -676,7 +746,14 @@ public final class RBSHook {
             return null;
         }
         keptBody.remove(visual);
-        return variantModelOf(female, variantOfVisual(visual));
+        int v = variantOfVisual(visual);
+        // another mod's NPC's corpse (it keeps the rbsNpc mark): the HD body it wore alive, when there
+        Object owner = ownerOf(visual);
+        if (owner != null && !isLiveZombie(owner) && isNpc(owner)) {
+            Object h = npcModel(owner, visual, female, v);
+            if (h != null) return h;
+        }
+        return variantModelOf(female, v);
     }
 
     private static Object variantModel(boolean female, int hash) throws Exception {
@@ -758,21 +835,33 @@ public final class RBSHook {
         int h = visualHash(visual);
         int[] c = variantCache.get(visual);
         int ver = cfgVersion;
-        if (c != null && c[1] == ver && c[2] == h) return c[0];
         Object owner = ownerOf(visual);
+        int chosen = chosenVariant(visual, owner);
+        // another mod's NPC / companion (a zombie it marks "useless"): rolled from the looks that mod gives it, not from
+        // the skin and body hair indexes - those are the random ones of every zombie it spawns for the same companion
+        // (Stay With Me spawns it anew and sets the skin by name only: thin one day, obese the next, 2026-11-18)
+        boolean npc = owner != null && chrClass != null && chrClass.isInstance(owner) && isNpc(owner);
+        int roll = npc ? npcHash(visual) : h;
+        if (c != null && c[1] == ver && c[2] == roll && c[3] == chosen) return c[0];
         boolean corpse = owner != null && deadBodyClass != null && deadBodyClass.isInstance(owner);
-        int v = corpse ? storedVariant(owner) : -1;
+        int v = corpse ? storedVariant(owner, "RBS_BodyVariant") : chosen;
+        if (chosen >= 0 && chosenLogs < 6 && (c == null || c[3] != chosen)) {
+            chosenLogs++;
+            log("zombie body: another mod chose the body of one of its characters (" + CHOSEN_KEY + ") - " + NAMES[chosen]);
+        }
         if (v < 0) {
             // the line of work from the visual itself (a copy carries it; its owner - an AnimatedModel - has none),
             // else from the owner. Neither (a corpse of an earlier session, drawn from a copy): the body this session
             // already saw with these looks, if any
             String outfit = outfitOfVisual(visual);
             if (outfit == null) outfit = outfitOf(owner);
-            Integer seen = outfit == null && !corpse ? bodyByLooks.get(h) : null;
+            // not right after another mod took its choice back: these looks were seen with the chosen body
+            boolean unchosen = c != null && c[3] >= 0;
+            Integer seen = outfit == null && !corpse && !unchosen && !npc ? bodyByLooks.get(h) : null;
             if (seen != null) v = seen;
             else {
                 boolean female = (Boolean) vIsFemale.invoke(visual);
-                v = variant(h, weightsFor(female, outfit));
+                v = variant(roll, weightsFor(female, outfit));
             }
             boolean copy = !corpse && !(chrClass != null && chrClass.isInstance(owner));
             if (copy && copyLogs < 6) {
@@ -784,9 +873,70 @@ public final class RBSHook {
                         + (before != null && before != v ? " - NOT the " + NAMES[before] + " it had" : ""));
             }
         }
+        // by the usual hash also for an NPC: a corpse drawn from a copy of its looks is looked up by that one
         if (corpse || chrClass != null && chrClass.isInstance(owner)) bodyByLooks.put(h, v);
-        variantCache.put(visual, new int[]{ v, ver, h });
+        variantCache.put(visual, new int[]{ v, ver, roll, chosen });
+        if (npc && npcLogs < 6 && chosen < 0 && (c == null || c[0] != v)) {
+            npcLogs++;
+            log("zombie body: another mod's NPC / companion - " + NAMES[v] + ", from the looks that mod gives it (skin "
+                    + skinName(visual) + "), the same body whenever it is spawned again with them");
+        }
         return v;
+    }
+
+    private static int npcLogs;
+
+    /**
+     * The roll of another mod's NPC: the looks that mod sets on it - the skin by name (HumanVisual.getSkinTexture:
+     * the name it was given, else the one of its index), hair, beard, hair colour - so the same companion gets the same
+     * body on every zombie the mod spawns for it, in every session (String hashes are the same on every machine).
+     */
+    static int npcHash(Object visual) throws Exception {
+        int h = 23;
+        h = h * 31 + Objects.hashCode(skinName(visual));
+        h = h * 31 + Objects.hashCode(vHairModel.invoke(visual));
+        h = h * 31 + Objects.hashCode(vBeardModel.invoke(visual));
+        Object col = vHairColor.invoke(visual);
+        if (col != null) {
+            h = h * 31 + Math.round(fR.getFloat(col) * 255);
+            h = h * 31 + Math.round(fG.getFloat(col) * 255);
+            h = h * 31 + Math.round(fB.getFloat(col) * 255);
+        }
+        return h;
+    }
+
+    /** the skin texture's name of a visual, or its index when the name cannot be read */
+    private static Object skinName(Object visual) {
+        try {
+            if (vSkinName != null) {
+                Object n = vSkinName.invoke(visual);
+                if (n != null && !n.toString().isEmpty()) return n.toString();
+            }
+            return vSkin.invoke(visual);
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
+    /**
+     * The ModData key another mod sets on a zombie it owns (an NPC / companion built on IsoZombie, e.g. Stay With Me)
+     * to choose its body: 0 Thin, 1 Normal, 2 Fat, 3 Obese (index of NAMES); absent or anything else = the usual pick.
+     * Its own key, not RBS_BodyVariant: that one this patch writes on every zombie it shapes (tagVariant, for the Lua
+     * and other mods to read), and the game reuses zombies, so reading it back would let a reused zombie keep the body
+     * of the one before. Proposed by Come and See (Steam discussion, 2026-11-18) with RBS_BodyVariant; Lua helper:
+     * RealBodyShape.setZombieBody(zombie, body).
+     */
+    static final String CHOSEN_KEY = "RBS_BodyVariantSet";
+    private static int chosenLogs;
+
+    /**
+     * the body another mod chose for this live character (CHOSEN_KEY), or -1 - read anew every time (two reflected
+     * calls, like the looks above): a mod sets it and resets the model at once, often right after the spawn - a
+     * value kept for half a second gave that reset the old body until the next one (2026-11-18)
+     */
+    private static int chosenVariant(Object visual, Object owner) {
+        if (owner == null || chrClass == null || !chrClass.isInstance(owner)) return -1;
+        return storedVariant(owner, CHOSEN_KEY);
     }
 
     /** the outfit's name of a visual (in memory: a corpse loaded from a save has none), or null */
@@ -840,8 +990,41 @@ public final class RBSHook {
         }
     }
 
-    /** the body a corpse's zombie had (ModData RBS_BodyVariant), or -1 */
-    private static int storedVariant(Object owner) {
+    private static Method zUseless;
+    private static volatile boolean zUselessTried;
+
+    /**
+     * A zombie another mod drives as an NPC or a companion (Project A-Life, Stay With Me...): "useless" (it does not
+     * attack by itself), or marked rbsNpc by the dismemberment Lua (RealBodyShape.limbsNpc - the mark stays on its
+     * corpse). Never dismembered (The Virginslayer, 2026-11-18: A-Life NPCs spawned with missing limbs).
+     */
+    static boolean isNpc(Object chr) {
+        if (chr == null) return false;
+        try {
+            if (zombieClass != null && zombieClass.isInstance(chr)) {
+                if (!zUselessTried) {
+                    try {
+                        zUseless = zombieClass.getMethod("isUseless");
+                    } catch (NoSuchMethodException e) {
+                        zUseless = null;
+                    }
+                    zUselessTried = true;
+                }
+                if (zUseless != null && (Boolean) zUseless.invoke(chr)) return true;
+            }
+            return Boolean.TRUE.equals(modDataValue(chr, "rbsNpc"));
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    /** the corpse or zombie a visual belongs to (HumanVisual.owner), or null - for Limbs */
+    static Object visualOwner(Object visual) {
+        return ownerOf(visual);
+    }
+
+    /** a value in an object's ModData (rawget, no Lua call), or null */
+    private static Object modDataValue(Object owner, String key) {
         try {
             if (tRawget == null) {
                 Class<?> kt = Class.forName("se.krka.kahlua.vm.KahluaTable", false, RBSHook.class.getClassLoader());
@@ -850,7 +1033,47 @@ public final class RBSHook {
                 chrModData = Class.forName("zombie.iso.IsoObject", false, RBSHook.class.getClassLoader()).getMethod("getModData");
             }
             Object t = chrModData.invoke(owner);
-            Object v = t == null ? null : tRawget.invoke(t, "RBS_BodyVariant");
+            return t == null ? null : tRawget.invoke(t, key);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /** a value in an object's ModData, or null (for the other classes) */
+    static Object modData(Object owner, String key) {
+        return modDataValue(owner, key);
+    }
+
+    /** a number in a character's ModData, or NaN */
+    static double modDataNumber(Object owner, String key) {
+        Object v = modDataValue(owner, key);
+        return v instanceof Number ? ((Number) v).doubleValue() : Double.NaN;
+    }
+
+    /** a number written in a character's ModData for the Lua side, only when it differs from what is there */
+    static void setModDataNumber(Object owner, String key, double value) {
+        try {
+            if (tRawset == null) modDataValue(owner, key);
+            Object t = chrModData.invoke(owner);
+            if (t == null) return;
+            Double val = value;
+            if (!val.equals(tRawget.invoke(t, key))) tRawset.invoke(t, key, val);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** a body index (0..NAMES.length-1) stored in the owner's ModData under key - RBS_BodyVariant: the body a corpse's
+     *  zombie had; CHOSEN_KEY: the body another mod chose - or -1 */
+    private static int storedVariant(Object owner, String key) {
+        try {
+            if (tRawget == null) {
+                Class<?> kt = Class.forName("se.krka.kahlua.vm.KahluaTable", false, RBSHook.class.getClassLoader());
+                tRawget = kt.getMethod("rawget", Object.class);
+                tRawset = kt.getMethod("rawset", Object.class, Object.class);
+                chrModData = Class.forName("zombie.iso.IsoObject", false, RBSHook.class.getClassLoader()).getMethod("getModData");
+            }
+            Object t = chrModData.invoke(owner);
+            Object v = t == null ? null : tRawget.invoke(t, key);
             if (v instanceof Number) {
                 int i = ((Number) v).intValue();
                 if (i >= 0 && i < NAMES.length) return i;
@@ -920,6 +1143,11 @@ public final class RBSHook {
             vIsSkeleton = visualClass.getMethod("isSkeleton");
             vIsFemale = visualClass.getMethod("isFemale");
             vSkin = visualClass.getMethod("getSkinTextureIndex");
+            try {
+                vSkinName = visualClass.getMethod("getSkinTexture");
+            } catch (NoSuchMethodException e) {
+                vSkinName = null;
+            }
             vBodyHair = visualClass.getMethod("getBodyHairIndex");
             vHairModel = visualClass.getMethod("getHairModel");
             vBeardModel = visualClass.getMethod("getBeardModel");

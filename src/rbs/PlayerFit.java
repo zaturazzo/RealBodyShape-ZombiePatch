@@ -22,7 +22,9 @@ import java.util.WeakHashMap;
  * PlayerFitTable (one table per shape parameter, fitted offline by rough_clothes.py) with the player's parameters.
  * The shape is the one the mod last built the body files for (~/Zomboid/Lua/RealBodyShape_built.txt); the mod writes
  * ~/Zomboid/Lua/RealBodyShape_fit.txt when a game starts: rough=1/0, female=0 when women keep another mod's body,
- * and known=<model> for every model it has data for (those are left alone, they already have the shape).
+ * and known=<model> for every model it has data for (those are left alone, they already have the shape); while
+ * Tomb's Player Body is worn, tomb= / tombgain= lines carry the Tomb add-on's own table (in the game's frame), used
+ * instead of PlayerFitTable for every piece then.
  * A fit file older than this game session means the mod is off: nothing is done then.
  * Only players wearing the game's shared body (not another mod's body, e.g. a child's), not hair or beards.
  */
@@ -41,6 +43,16 @@ final class PlayerFit {
     private static volatile boolean on, femaleOn = true;
     /** RealBodyShape_HD draws the body (hd=1): add what its rounder skin needs on top (PlayerFitTableHD) */
     private static volatile boolean hdOn;
+    /**
+     * Tomb's Player Body is worn: it grows otherwise than the game's body PlayerFitTable is fitted to (a woman's calves
+     * and thighs with its fill morph), so the Tomb add-on brings a table of its own, fitted to Tomb's body and its skin
+     * weights (rough_tomb.py), passed on by the mod in the fit file as tomb=Female|Male key bone 12 numbers and
+     * tombgain=amount,gain,... (the fill morph's gain). Used for every piece while Tomb's body is worn. [sex][TOMB_KEYS][bone],
+     * a sex without rows keeps PlayerFitTable.
+     */
+    private static volatile float[][][][] tomb = new float[2][][][];
+    private static volatile float[] tombGain;
+    private static final String[] TOMB_KEYS = tombKeys();
     private static volatile Set<String> known = Collections.emptySet();
     /** models never fitted, roughly or (zombies) by Fit: RealBodyShape.ROUGH.skip, a whole path or its last parts */
     private static volatile Set<String> skip = Collections.emptySet();
@@ -157,6 +169,8 @@ final class PlayerFit {
             kind = 1;
             why = "no data - fitted roughly";
         }
+        if (kind == 1 && tombMade(path)) why += " (made for Tomb's body)";
+        if (kind == 1 && tight(path)) why += ", worn tight: fitted closer (x" + TIGHT + ")";
         pieces.put(data, new Object[]{ kind, now + 3_000_000_000L });
         if (why != null && logs < 24) {
             logs++;
@@ -174,38 +188,57 @@ final class PlayerFit {
         return false;
     }
 
-    /** path -> the other mod's file the game loads for it, "" for none (the mod's own file is the one worn) */
-    private static final Map<String, String> others = new java.util.concurrent.ConcurrentHashMap<>();
+    /** path -> the file the game loads for it (forward slashes), "" when it cannot be told */
+    private static final Map<String, String> files = new java.util.concurrent.ConcurrentHashMap<>();
     private static Object fileSystem;
     private static Method fsGetString;
 
     /**
-     * Another mod's .fbx / .glb of this model, which the game loads instead of the .x the mod reshapes (the game tries
-     * .fbx, then .glb, then .x - FileTask_AbstractLoadModel.checkExtensionType), or null. A file in one of this mod's
-     * own folders (RealBodyShape...) is ours: the Tomb add-ons write their .fbx pieces there.
+     * The file the game loads for this model: it tries .fbx, then .glb, then .x (FileTask_AbstractLoadModel
+     * .checkExtensionType), each through the mods' files first (ZomboidFileSystem.getString). Null when none is found or
+     * the game cannot be asked.
      */
-    static String otherModel(String path) {
+    static String modelFile(String path) {
         if (path == null || fsGetString == null) return null;
-        String v = others.get(path);
+        String v = files.get(path);
         if (v == null) {
             v = "";
-            for (String ext : new String[]{ ".fbx", ".glb" }) {
+            for (String ext : new String[]{ ".fbx", ".glb", ".x" }) {
                 try {
                     Object r = fsGetString.invoke(fileSystem, "media/models_X/" + path + ext);
                     if (!(r instanceof String)) continue;
                     java.io.File f = new java.io.File((String) r);
                     if (!f.isFile()) continue;
-                    String abs = f.getAbsolutePath().replace('\\', '/');
-                    if (abs.toLowerCase(Locale.ROOT).matches(".*/realbodyshape[^/]*/.*")) break;   // ours
-                    v = abs;
+                    v = f.getAbsolutePath().replace('\\', '/');
                     break;
                 } catch (Throwable ignored) {
-                    // cannot tell: treated as the mod's own file, as before
+                    // cannot tell: treated as before (the mod's own file, the game body's table)
                 }
             }
-            others.put(path, v);
+            files.put(path, v);
         }
         return v.isEmpty() ? null : v;
+    }
+
+    /**
+     * Another mod's .fbx / .glb of this model, which the game loads instead of the .x the mod reshapes, or null. A file
+     * in one of this mod's own folders (RealBodyShape...) is ours: the Tomb add-ons write their .fbx pieces there.
+     */
+    static String otherModel(String path) {
+        String f = modelFile(path);
+        if (f == null) return null;
+        String low = f.toLowerCase(Locale.ROOT);
+        if (low.endsWith(".x") || low.matches(".*/realbodyshape[^/]*/.*")) return null;
+        return f;
+    }
+
+    /**
+     * A piece made for Tomb's Player Body: its file is in one of Tomb's mods (Tomb's Player Body - Compatability, its
+     * Boots Expanded parts...): said in the log (every piece follows Tomb's own table while Tomb's body is worn).
+     */
+    static boolean tombMade(String path) {
+        String f = modelFile(path);
+        return f != null && f.toLowerCase(Locale.ROOT).contains("/tomb's player body");
     }
 
     /** the mod has its own data for this model (its files already have the shape) */
@@ -225,9 +258,23 @@ final class PlayerFit {
     private static float[][] mapsFor(Object player, Object data, int sex) throws Exception {
         int key = version * 2 + sex;
         Object[] c = mapsCache.get(data);
-        if (c != null && (Integer) c[0] == key) return (float[][]) c[1];
-        float[][][] table = PlayerFitTable.DELTA[sex];
+        if (c != null && (Integer) c[0] == key && System.nanoTime() < (Long) c[2]) return (float[][]) c[1];
+        // Tomb's body worn (the mod sends its table only then): Tomb's own table for every piece - the ones made for
+        // Tomb's body and the ones made on the game's body alike follow how Tomb's body grows (offline, a 115 kg
+        // woman: the game's trousers 104 skin points out with the game body's table, 26 with Tomb's; Compatibility's
+        // long shorts 93 / 10 - rough_tomb.py, 2026-11-18)
+        float[][][] tombTable = tomb[sex];
+        float[][][] table = tombTable != null ? tombTable : PlayerFitTable.DELTA[sex];
         float[] p = params;
+        if (tombTable != null) {                                  // its keys: PlayerFitTable.KEYS, then fill
+            float[] q = new float[TOMB_KEYS.length];
+            System.arraycopy(p, 0, q, 0, Math.min(p.length, q.length));
+            q[TOMB_KEYS.length - 1] = gain(tombGain, p[0] - p[1]);
+            p = q;
+        }
+        // a small piece worn tight (a belt, a holster...) gets less of the tables' room
+        String path = MeshInfo.path(player, data);
+        float f = tight(path) ? TIGHT : 1f;
         Map<String, float[]> byName = new HashMap<>();
         for (int b = 0; b < FitTable.BONES.length; b++) {
             float[] a = IDENTITY.clone();
@@ -235,10 +282,10 @@ final class PlayerFit {
             for (int k = 0; k < p.length && k < table.length; k++) {
                 if (p[k] == 0f || table[k] == null || b >= table[k].length || table[k][b] == null) continue;
                 float[] d = table[k][b];
-                for (int j = 0; j < 12; j++) a[j] += p[k] * d[j];
+                for (int j = 0; j < 12; j++) a[j] += f * p[k] * d[j];
                 any = true;
             }
-            if (hdOn && addHD(a, sex, b, p)) any = true;
+            if (hdOn && tombTable == null && addHD(a, sex, b, p)) any = true;
             if (any && changes(a)) byName.put(FitTable.BONES[b], a);
         }
         for (int i = 0; i + 1 < FitTable.ALIAS.length; i += 2) {
@@ -268,8 +315,34 @@ final class PlayerFit {
             if (m == null) return null;                          // not yet: try again next time
             if (m.length == 0) m = null;
         }
-        mapsCache.put(data, new Object[]{ key, m });
+        // the model's name not found yet: asked again in a second (not every frame, should it never be found)
+        mapsCache.put(data, new Object[]{ key, m, path != null ? Long.MAX_VALUE : System.nanoTime() + 1_000_000_000L });
         return m;
+    }
+
+    /**
+     * Small pieces worn tight on the body, by the model's file name: belts, chokers and necklaces, holsters, fanny
+     * packs and pouches, straps, harnesses, webbing, bandoliers, suspenders, garters, bracelets. The tables' room
+     * (boost 1.2, for clothes over the skin) put them too far out: another mod's belt (Frockin Splendor Vol.6
+     * Belt_Deco_F) sat 1.9 cm off the waist at 85 kg where it was made 0.8 cm off - "a purple belt looks a bit thick"
+     * (user, 2026-11-19; Silver Chariot's bags and holsters floated, another mod's). x0.8: 1.2 cm at 85 kg, 1.1 at 110
+     * (was 2.05), no skin out up to 110 kg, at 130 kg no worse than before (scratchpad belt_scale.py). The HD body's
+     * extra room stays whole (its skin is rounder).
+     */
+    static final float TIGHT = 0.8f;
+    static final String[] TIGHT_WORDS = { "belt", "choker", "necklace", "pendant", "holster", "fanny", "pouch", "strap",
+            "harness", "webbing", "bandolier", "suspender", "garter", "bracelet" };
+    /** names with those words that are not small tight pieces (a belted coat, a strapless dress) */
+    static final String[] NOT_TIGHT = { "belted", "strapless" };
+
+    static boolean tight(String path) {
+        if (path == null) return false;
+        String n = path.toLowerCase(Locale.ROOT).replace('\\', '/');
+        int s = n.lastIndexOf('/');
+        if (s >= 0) n = n.substring(s + 1);
+        for (String w : NOT_TIGHT) if (n.contains(w)) return false;
+        for (String w : TIGHT_WORDS) if (n.contains(w)) return true;
+        return false;
     }
 
     /**
@@ -300,12 +373,55 @@ final class PlayerFit {
 
     /** the HD add-on's inner thigh fill: none below the first amount, all from the last, straight lines between */
     static float fillGain(float amount) {
-        float[] g = PlayerFitTableHD.FILL_GAIN;
+        return gain(PlayerFitTableHD.FILL_GAIN, amount);
+    }
+
+    /** a gain by the amount from pairs amount, gain, ... (straight lines between, flat outside); 0 without pairs */
+    static float gain(float[] g, float amount) {
+        if (g == null || g.length < 2) return 0f;
         if (amount <= g[0]) return g[1];
         for (int i = 2; i + 1 < g.length; i += 2) {
             if (amount <= g[i]) return g[i - 1] + (g[i + 1] - g[i - 1]) * (amount - g[i - 2]) / (g[i] - g[i - 2]);
         }
         return g[g.length - 1];
+    }
+
+    private static String[] tombKeys() {
+        String[] k = java.util.Arrays.copyOf(PlayerFitTable.KEYS, PlayerFitTable.KEYS.length + 1);
+        k[k.length - 1] = "fill";
+        return k;
+    }
+
+    /** one tomb= row of the fit file into t[sex][key][bone]; false when it does not read */
+    private static boolean tombRow(String v, float[][][][] t) {
+        String[] f = v.trim().split("\\s+");
+        if (f.length != 15) return false;
+        int sex = f[0].equals("Female") ? 0 : f[0].equals("Male") ? 1 : -1;
+        int key = indexOf(TOMB_KEYS, f[1]), bone = indexOf(FitTable.BONES, f[2]);
+        if (sex < 0 || key < 0 || bone < 0) return false;
+        float[] d = new float[12];
+        try {
+            for (int j = 0; j < 12; j++) d[j] = Float.parseFloat(f[3 + j]);
+        } catch (NumberFormatException e) {
+            return false;
+        }
+        for (float x : d) if (Float.isNaN(x) || Float.isInfinite(x) || Math.abs(x) > 1000f) return false;
+        if (t[sex] == null) t[sex] = new float[TOMB_KEYS.length][FitTable.BONES.length][];
+        t[sex][key][bone] = d;
+        return true;
+    }
+
+    private static float[] gainPairs(String v) {
+        String[] f = v.split(",");
+        if (f.length < 2 || f.length % 2 != 0) return null;
+        float[] g = new float[f.length];
+        try {
+            for (int i = 0; i < f.length; i++) g[i] = Float.parseFloat(f[i].trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        for (int i = 2; i < g.length; i += 2) if (!(g[i] > g[i - 2])) return null;     // amounts must rise
+        return g;
     }
 
     private static int indexOf(String[] keys, String key) {
@@ -324,7 +440,9 @@ final class PlayerFit {
     private static synchronized void load() {
         long now = System.nanoTime();
         if (now < nextCheck) return;
-        nextCheck = now + 2_000_000_000L;
+        // two file dates twice a second: other mods' clothes follow a new body within 0.5 s (2 s before; the
+        // test weight key, Ctrl+Shift+F7, rebuilds and reloads the body at once - 2026-11-18)
+        nextCheck = now + 500_000_000L;
         try {
             Path dir = Paths.get(System.getProperty("user.home"), "Zomboid", "Lua");
             Path cfg = dir.resolve(CONFIG), stamp = dir.resolve(STAMP);
@@ -338,6 +456,9 @@ final class PlayerFit {
             if (cfgChanged) {
                 boolean r = false, f = true, h = false;
                 Set<String> k = new HashSet<>(), sk = new HashSet<>();
+                float[][][][] tt = new float[2][][][];
+                float[] tg = null;
+                int tRows = 0, tBad = 0;
                 if (cm > 0 && cm + 5000 >= liveSince) {           // written in this session: the mod is on
                     for (String line : Files.readAllLines(cfg, StandardCharsets.UTF_8)) {
                         int eq = line.indexOf('=');
@@ -348,17 +469,26 @@ final class PlayerFit {
                         else if (key.equals("hd")) h = v.equals("1") || v.equalsIgnoreCase("true");
                         else if (key.equals("known") && !v.isEmpty()) k.add(MeshInfo.norm(v));
                         else if (key.equals("skip") && !v.isEmpty()) sk.add(MeshInfo.norm(v));
+                        else if (key.equals("tomb")) {
+                            if (tombRow(v, tt)) tRows++;
+                            else tBad++;
+                        } else if (key.equals("tombgain")) tg = gainPairs(v);
                     }
                 }
                 known = k;
                 skip = sk;
                 femaleOn = f;
                 hdOn = h;
+                tomb = tt;
+                tombGain = tg;
                 on = r;
                 pieces.clear();
                 if (on) RBSHook.log("rough fit: on - " + k.size() + " model(s) have the mod's own data, other 3D clothes on the player are fitted roughly"
                         + (f ? "" : " (men only: women keep another mod's body)") + (sk.isEmpty() ? "" : ", skip list: " + sk)
-                        + (h ? ", HD body: a little more room for its rounder skin" : ""));
+                        + (h ? ", HD body: a little more room for its rounder skin" : "")
+                        + (tRows > 0 ? ", Tomb's body: its own table (" + (tt[0] != null ? "women" : "") + (tt[0] != null && tt[1] != null ? " and " : "")
+                            + (tt[1] != null ? "men" : "") + ", " + tRows + " rows" + (tg != null ? ", fill by the amount" : "") + ")" : "")
+                        + (tBad > 0 ? " - " + tBad + " Tomb table row(s) did not read and were left out" : ""));
                 else if (wasOn || cm > 0) RBSHook.log("rough fit: off" + (cm > 0 && cm + 5000 < liveSince ? " (the mod did not start this session)" : ""));
             }
             float[] p = new float[PlayerFitTable.KEYS.length];
@@ -423,6 +553,11 @@ final class PlayerFit {
             RBSHook.warn("rough fit: UI previews left as they are: " + e);
             amCharacter = null;
         }
+    }
+
+    /** the AnimatedModel this AnimationPlayer animates, or null (for Hair: the previews of character creation...) */
+    static Object previewModel(Object player) {
+        return player == null ? null : previews.get(player);
     }
 
     /** the model instance of the player's UI preview this AnimationPlayer animates, or null (for MeshInfo) */

@@ -14,7 +14,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * media/models_X/RBSClean/ (another data mod can do the same for its own); when a zombie - alive, or a
  * corpse drawn by DeadBodyAtlas - gets a clothing model that has such a copy, the copy is loaded instead.
  * The player and everyone else keep the normal path. A copy is used only when it is the same file type the game
- * would load for the original name (a mod's .fbx must not turn into the vanilla .x).
+ * would load for the original name (a mod's .fbx must not turn into the vanilla .x). That also keeps the pieces Tomb's
+ * Player Body - Compatibility makes for Tomb's body on zombies: with the Tomb add-on the zombie bodies are Tomb's shape
+ * too (RealBodyShapeTomb builds Skinned/Zombie/*.fbx), so those pieces fit them (a try on 2026-11-18 that gave zombies
+ * the game's own piece instead was taken back the same day, before any release).
  */
 final class Clean {
     static final String DIR = "rbsclean/";
@@ -48,7 +51,9 @@ final class Clean {
             m = model.getClass().getMethod("getHumanVisual");
             amVisual = m;
         }
-        return RBSHook.isZombieVisual(m.invoke(model));
+        Object visual = m.invoke(model);
+        // a UI preview of another mod's NPC is dressed like that NPC: the untouched copies (fitted to its body by Fit)
+        return RBSHook.isZombieVisual(visual) || NpcHeads.previewOf(visual) != null;
     }
 
     /** a live zombie, or (no character passed) the corpse of one whose clothes an AnimatedModel builds right now */

@@ -47,6 +47,13 @@ final class FaceLayer {
     private static volatile String[] makeupNames;                            // the game's makeup files (lower case)
     private static final Object MISSING = new Object();
     private static int logged;
+    // each character texture's own head (user, 2026-11-19: each NPC of another mod its own head): the texture creator's
+    // smart texture -> GAME (the game's face) or "<head>/"; not there = the chosen head (Head), as for the player
+    static final String GAME = "\u0000game";
+    private static final Map<Object, String> smartHead = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    private static Field fDataMi, fMiChr, fMiAp, fCharSmart;
+    private static Method amVisual;
+    private static int specLogs;
 
     private FaceLayer() {}
 
@@ -80,6 +87,18 @@ final class FaceLayer {
                 fBaseTexture.setAccessible(true);
                 fNotReady = creator.getDeclaredField("texturesNotReady");
                 fNotReady.setAccessible(true);
+                try {                                          // whose texture it is (each NPC's head): optional
+                    Class<?> mi = Class.forName("zombie.core.skinnedmodel.model.ModelInstance", false, cl);
+                    fDataMi = chrData.getDeclaredField("modelInstance");
+                    fDataMi.setAccessible(true);
+                    fMiChr = mi.getField("character");
+                    fMiAp = mi.getField("animPlayer");
+                    fCharSmart = creator.getDeclaredField("characterSmartTexture");
+                    fCharSmart.setAccessible(true);
+                } catch (Throwable t) {
+                    fCharSmart = null;
+                    RBSHook.log("face layer: every character gets the chosen head's face (" + t + ")");
+                }
                 fCommands = smart.getField("commands");
                 fCatMap = smart.getDeclaredField("categoryMap");
                 fCatMap.setAccessible(true);
@@ -171,17 +190,29 @@ final class FaceLayer {
         headGen = g;
     }
 
-    /** the layer to draw for our layer path: the chosen head's (RBSHeadFace[/id]) when there is one */
-    private static String inUse(String layer) {
+    /** the game's face for this spec (no head layer, the game's makeup) */
+    private static boolean none(String spec) {
+        return spec == null ? Head.none() : spec == GAME;
+    }
+
+    /** the head's sub-folder for this spec ("<head>/", or "" for the files at the top) */
+    private static String sub(String spec) {
+        return spec == null ? Head.sub() : spec == GAME ? "" : spec;
+    }
+
+    /** the layer to draw for our layer path: the head's (RBSHeadFace[/id]) when there is one */
+    private static String inUse(String layer, String spec) {
         headChanged();
-        if (Head.none()) return layer;
+        if (none(spec)) return layer;
+        String sub = sub(spec);
+        String key = sub + "|" + layer;
         synchronized (headLayer) {
-            String p = headLayer.get(layer);
+            String p = headLayer.get(key);
             if (p != null) return p;
-            String h = HEAD_DIR + Head.sub() + layer.substring(DIR.length());
+            String h = HEAD_DIR + sub + layer.substring(DIR.length());
             p = exists(h) ? h : layer;
             if (p != layer) RBSHook.log("face layer: a head mod's layer in use: " + h);
-            headLayer.put(layer, p);
+            headLayer.put(key, p);
             return p;
         }
     }
@@ -207,18 +238,19 @@ final class FaceLayer {
     }
 
     /** the head mod's makeup for a game makeup file name (lower case), or null */
-    private static String headMakeup(String lowerName) {
+    private static String headMakeup(String lowerName, String spec) {
         headChanged();
-        if (Head.none()) return null;
-        String dir = HEAD_MAKEUP + Head.sub();
+        if (none(spec)) return null;
+        String dir = HEAD_MAKEUP + sub(spec);
+        String key = dir + "|" + lowerName;
         synchronized (makeupFor) {
-            String p = makeupFor.get(lowerName);
+            String p = makeupFor.get(key);
             if (p == null) {
                 p = "";
                 for (String cand : new String[]{lowerName, original(lowerName)}) {
                     if (cand != null && exists(dir + cand)) { p = dir + cand; break; }
                 }
-                makeupFor.put(lowerName, p);
+                makeupFor.put(key, p);
             }
             return p.isEmpty() ? null : p;
         }
@@ -254,16 +286,17 @@ final class FaceLayer {
         try {
             if (!init(creator.getClass().getClassLoader())) return;
             Object data = fChrData.get(creator);
+            String spec = specFor(creator, data);
             String path = layerFor(data == null ? null : (String) fBaseTexture.get(data));
             if (path == null || !gameSkin(path)) return;
-            Object tex = texture(inUse(path));
+            Object tex = texture(inUse(path, spec));
             if (tex == null || (Boolean) texFailure.invoke(tex)) return;
             List<Object> wait = (List<Object>) fNotReady.get(creator);
             if (!(Boolean) texReady.invoke(tex)) wait.add(tex);
             // a head mod's makeup: loaded here so the texture waits for it like for the game's own (the first build
             // would otherwise draw the game's makeup and keep it)
             for (String m : makeupNames()) {
-                String hp = headMakeup(m);
+                String hp = headMakeup(m, spec);
                 if (hp == null) continue;
                 Object mt = texture(hp);
                 if (mt != null && !(Boolean) texFailure.invoke(mt) && !(Boolean) texReady.invoke(mt)) wait.add(mt);
@@ -271,6 +304,45 @@ final class FaceLayer {
         } catch (Throwable t) {
             warn("face layer (init) failed: " + t);
         }
+    }
+
+    /**
+     * the head of the character this creator's texture is for, kept for its smart texture: another mod's NPC its own
+     * (NpcHeads; GAME for the game's head - its face, not the chosen head's painted for another head), a UI preview of
+     * an NPC (its info window) that NPC's; anyone else null (the chosen head, as before)
+     */
+    private static String specFor(Object creator, Object data) {
+        if (fCharSmart == null || data == null) return null;
+        String spec = null;
+        try {
+            Object mi = fDataMi.get(data);
+            Object chr = mi == null ? null : fMiChr.get(mi);
+            if (chr != null) {
+                if (RBSHook.isNpc(chr)) {
+                    Object v = RBSHook.visualOf(chr);
+                    String h = NpcHeads.headOf(chr, v, v != null && RBSHook.isFemaleVisual(v));
+                    spec = h.isEmpty() ? GAME : h + "/";
+                }
+            } else if (mi != null) {
+                Object am = PlayerFit.previewModel(fMiAp.get(mi));
+                if (am != null) {
+                    if (amVisual == null || amVisual.getDeclaringClass() != am.getClass()) amVisual = am.getClass().getMethod("getHumanVisual");
+                    Object[] seen = NpcHeads.seenWith(amVisual.invoke(am));
+                    if (seen != null) spec = ((String) seen[2]).isEmpty() ? GAME : seen[2] + "/";
+                }
+            }
+            Object smart = fCharSmart.get(creator);
+            if (smart != null) {
+                if (spec == null) smartHead.remove(smart);
+                else smartHead.put(smart, spec);
+            }
+            if (spec != null && specLogs++ < 6)
+                RBSHook.log("face layer: " + (chr != null ? "another mod's NPC" : "a preview of another mod's NPC") + " - "
+                        + (spec == GAME ? "the game's face" : "head '" + spec.substring(0, spec.length() - 1) + "'"));
+        } catch (Throwable t) {
+            warn("face layer (whose texture) failed: " + t);
+        }
+        return spec;
     }
 
     /** before SmartTexture.calculate() */
@@ -284,9 +356,10 @@ final class FaceLayer {
             if (skin == null) return;
             String path = layerFor((String) texName.invoke(skin));
             if (path == null || !gameSkin(path)) return;
-            Object tex = texture(inUse(path));
+            String spec = smartHead.get(smart);
+            Object tex = texture(inUse(path, spec));
             if (!usable(tex)) return;
-            swapMakeup(cmds);
+            swapMakeup(cmds, spec);
             // a face layer already there: this one, or another head's (the choice changed while the character's
             // texture was kept) - that one is given this layer, so two faces are never drawn one over the other
             boolean have = false;
@@ -317,7 +390,7 @@ final class FaceLayer {
     /** the game's makeup layers -> the head mod's (ready ones only; a missing file keeps the game's). One already
      *  moved for another head (in its own folder: the choice changed since) -> this head's, or the game's own file
      *  when the game's face is chosen */
-    private static void swapMakeup(List<Object> cmds) throws Exception {
+    private static void swapMakeup(List<Object> cmds, String spec) throws Exception {
         for (Object c : cmds) {
             Object t = fCmdTex.get(c);
             if (t == null) continue;
@@ -329,7 +402,7 @@ final class FaceLayer {
                 moved = f != null;
             }
             if (f == null) continue;
-            String hp = headMakeup(f);
+            String hp = headMakeup(f, spec);
             if (hp == null) {
                 if (!moved) continue;
                 String g = original(f);

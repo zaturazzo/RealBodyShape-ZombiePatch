@@ -313,6 +313,28 @@ final class Jiggle {
         return 2;
     }
 
+    /**
+     * The shaders compiled now if nothing did it yet (they are compiled with the first body drawn in the world: on the
+     * main menu, the character creation preview comes first), on the game's shared body model; false if they can't be.
+     */
+    static boolean ensureShaders() {
+        int st = shaderState;
+        if (st == 2) return true;
+        if (st == 3 || failed) return false;
+        try {
+            loadConfig();
+            if (!enabled) return false;
+            if (!ready) init();
+            if (failed) return false;
+            Object m = fieldOf(fFemaleBody);
+            if (m == null) m = fieldOf(fMaleBody);
+            return m != null && shaderReady(m);
+        } catch (Throwable t) {
+            RBSHook.warn("jiggle: shaders not compiled early: " + t);
+            return false;
+        }
+    }
+
     private static boolean shaderReady(Object model) throws Exception {
         int st = shaderState;
         if (st == 2) return true;
@@ -396,8 +418,15 @@ final class Jiggle {
             if (tr.length <= Hair.SLOT) out[Hair.SLOT] = Hair.slot(player, pad);   // identity unless its hair sways
             if (tr.length <= Env.SLOT) out[Env.SLOT] = Env.slot(player, pad);      // the wind (not used by a shader yet)
             if (tr.length <= Eyes.SLOT_HEAD) {                  // eyeballs (a head mod's): identity without one
-                out[Eyes.SLOT_HEAD] = Eyes.headSlot(pad);
-                out[Eyes.SLOT] = z[0] == 3 ? identity : Eyes.slot(player, pad);    // another player: a variant body, no eyeballs
+                // another mod's NPC wearing a head other than the chosen one (NpcHeads): the eyes' places in slot 54
+                // are the chosen head's - its eyes stay still, open
+                boolean otherHead = false;
+                if (z[0] == 1 && NpcHeads.anyNoted() && NpcHeads.heads().length > 0) {   // no NPC mod: skipped at once
+                    String h = NpcHeads.headOfChr(apCharacter.invoke(player));
+                    otherHead = h != null && !(h.isEmpty() ? Head.none() : (h + "/").equals(Head.sub()));
+                }
+                out[Eyes.SLOT_HEAD] = otherHead ? identity : Eyes.headSlot(pad);
+                out[Eyes.SLOT] = z[0] == 3 || otherHead ? identity : Eyes.slot(player, pad);    // another player: a variant body, no eyeballs
             }
             State s = enabled ? states.get(player) : null;
             // a mesh in a space of its own (another mod's FBX, x100, Z up): the shader's rows are in the game's space and
@@ -511,7 +540,7 @@ final class Jiggle {
                 int var = (int) z[1];
                 gain = GAIN[var];
                 bust = female ? BUST_ZOMBIE : BUST_MALE[var];
-                model = RBSHook.variantModelOf(female, var);
+                model = RBSHook.zombieVariantModel(chr, female, var);     // an NPC: the HD add-on's, when there
             } else if (z[0] == 2 && players && !Boolean.FALSE.equals(sharedBody.get(chr))) {
                 gain = playerGain(chr);
                 bust = female ? BUST_PLAYER : gain * BUST_MALE_PLAYER;

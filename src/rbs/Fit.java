@@ -155,7 +155,12 @@ final class Fit {
         }
         if (!RBSHook.zombiesEnabled()) return null;
         Object visual = Limbs.animatedVisual(player);
-        if (visual == null || !RBSHook.isZombieVisual(visual) || !RBSHook.wearsVariant(visual)) return null;
+        if (visual == null) return null;
+        if (!RBSHook.isZombieVisual(visual)) {
+            Object[] p = NpcHeads.previewOf(visual);            // a UI preview of another mod's NPC: its body's fit
+            return p == null ? null : describe((Boolean) p[0], (Integer) p[1], "NPC preview");
+        }
+        if (!RBSHook.wearsVariant(visual)) return null;
         return describe(visual);
     }
 

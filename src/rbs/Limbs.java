@@ -107,26 +107,125 @@ final class Limbs {
         if (chr != null) {
             long now = System.nanoTime();
             long[] e = byChar.get(chr);
-            if (e != null && now < e[1]) return (int) e[0];
+            Object visual = null;
+            int nBody = -1;
+            if (e != null && now < e[1]) {
+                // a cut puts a marker in the looks: seen within 0.1 s (the number of body visuals changed), not 2 s later
+                if (e[2] < 0 || now < e[3]) return (int) e[0];
+                e[3] = now + 100_000_000L;
+                visual = RBSHook.visualOf(chr);
+                nBody = bodyVisualCount(visual);
+                if (nBody == e[2]) return (int) e[0];
+            }
             int m = 0;
             if (RBSHook.isLiveZombie(chr)) {
-                Object visual = RBSHook.visualOf(chr);
+                if (visual == null) visual = RBSHook.visualOf(chr);
                 if (visual != null) {
                     long seed = RBSHook.seedOf(visual);
-                    m = maskOf(seed);
+                    if (RBSHook.isNpc(chr)) {
+                        // another mod's NPC / companion: left whole, and so is its corpse (same looks, same seed)
+                        if (npcSeeds.put(seed, Boolean.TRUE) == null && npcLogs++ < 6)
+                            RBSHook.log("limbs: an NPC of another mod (a \"useless\" zombie) - left whole, alive and as a corpse");
+                        m = 0;
+                    } else {
+                        int cut = cutOf(visual);
+                        m = maskOf(seed) | cut;
+                        if (cut != 0 && (e == null || ((int) e[0] & cut) != cut) && cutLogs++ < 10)
+                            RBSHook.log("limbs: a zombie lost a limb to a hit -" + describe(cut));
+                    }
                     if (m != 0 && (e == null || e[0] != m)) {
                         hidden++;
                         if (diag++ < 12) RBSHook.log("limbs: zombie seed=" + seed + " mask=" + describe(m));
                     }
+                    tellLegs(chr, m & (L_LEG | R_LEG));
+                    if (nBody < 0) nBody = bodyVisualCount(visual);
                 }
             }
-            byChar.put(chr, new long[]{ m, now + 2_000_000_000L });
+            byChar.put(chr, new long[]{ m, now + 2_000_000_000L, nBody, now + 100_000_000L });
             return m;
         }
         Object visual = animated.get(player);
         if (visual == null || !RBSHook.isZombieVisual(visual)) return 0;
-        return maskOf(RBSHook.seedOf(visual));
+        long seed = RBSHook.seedOf(visual);
+        if (npcSeeds.containsKey(seed)) return 0;               // an NPC seen alive this session
+        Object owner = RBSHook.visualOwner(visual);             // a real corpse (not the atlas's copy): its mark
+        if (owner != null && !RBSHook.isLiveZombie(owner) && RBSHook.isNpc(owner)) {
+            npcSeeds.put(seed, Boolean.TRUE);
+            return 0;
+        }
+        return maskOf(seed) | cutOf(visual);                    // a corpse or its atlas copy: the markers came along
     }
+
+    /**
+     * The legs drawn hidden, told to the Lua (ModData rbsDrawLegs: the leg bits, 64 left / 128 right): a zombie drawn
+     * without a leg must crawl, whatever the Lua worked out from the looks it saw first (user, 2026-11-19: "เจอ zom
+     * ขาเดียวเดินอีกแล้ว"). Written only when it changes, and not at all on a zombie that never missed a leg.
+     */
+    private static void tellLegs(Object chr, int legs) {
+        double cur = RBSHook.modDataNumber(chr, DRAW_LEGS_KEY);
+        if (legs != 0 ? cur != legs : !Double.isNaN(cur) && cur != 0) RBSHook.setModDataNumber(chr, DRAW_LEGS_KEY, legs);
+    }
+
+    static final String DRAW_LEGS_KEY = "rbsDrawLegs";
+
+    // ---------------- limbs cut off by hits ----------------
+    // RealBodyShapeLimbs.lua, on a hit that cuts: a hidden body visual Base.RBS_Cut_<part> in the zombie's looks. The
+    // game saves body visuals with the zombie, copies them to its corpse and to the corpse atlas's copy of it, so the
+    // cut is found from the looks alone, alive, dead, drawn from the atlas and after a reload (limbs_cut_assets.py).
+    static final String CUT_PREFIX = "RBS_Cut_";
+    static final String[] CUT_PARTS = { "LHand", "LForearm", "LArm", "RHand", "RForearm", "RArm", "LLeg", "RLeg" };
+    static final int[] CUT_MASKS = { L_HAND, L_HAND | L_FORE, L_HAND | L_FORE | L_UPPER, R_HAND, R_HAND | R_FORE,
+            R_HAND | R_FORE | R_UPPER, L_LEG, R_LEG };
+    private static Method vBodyVisuals, ivItemType;
+    private static int cutLogs;
+
+    /** how many body visuals the looks have (-1: can't tell) */
+    static int bodyVisualCount(Object visual) {
+        if (visual == null || vBodyVisuals == null) return -1;
+        try {
+            Object l = vBodyVisuals.invoke(visual);
+            return l instanceof List ? ((List<?>) l).size() : -1;
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    /** the limbs cut off by hits, from the markers in the looks */
+    static int cutOf(Object visual) {
+        if (visual == null || vBodyVisuals == null) return 0;
+        try {
+            Object l = vBodyVisuals.invoke(visual);
+            if (!(l instanceof List)) return 0;
+            List<?> list = (List<?>) l;
+            int m = 0;
+            for (int i = 0, n = list.size(); i < n; i++) {
+                Object iv = i < list.size() ? list.get(i) : null;
+                Object t = iv == null ? null : ivItemType.invoke(iv);
+                if (t != null) m |= cutMaskOf(t.toString());
+            }
+            return m;
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
+    /** "Base.RBS_Cut_LForearm" -> its bits (0 when not a marker) */
+    static int cutMaskOf(String itemType) {
+        int i = itemType.indexOf(CUT_PREFIX);
+        if (i < 0) return 0;
+        String p = itemType.substring(i + CUT_PREFIX.length());
+        for (int k = 0; k < CUT_PARTS.length; k++) if (CUT_PARTS[k].equalsIgnoreCase(p)) return CUT_MASKS[k];
+        return 0;
+    }
+
+    /** looks (seed) of the NPCs of other mods seen this session: their corpses drawn from a copy stay whole too */
+    private static final Map<Long, Boolean> npcSeeds = Collections.synchronizedMap(new java.util.LinkedHashMap<Long, Boolean>(64, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Long, Boolean> eldest) {
+            return size() > 2048;
+        }
+    });
+    private static int npcLogs;
 
     /** Same arithmetic as RealBodyShapeLimbs.lua (maskOf): the two sides must agree on every zombie. */
     static int maskOf(long h) {
@@ -307,6 +406,15 @@ final class Limbs {
             mLoad = m4.getMethod("load", FloatBuffer.class);
             mInvert = m4.getMethod("invert", m4, m4);
             matrixCtor = m4.getConstructor();
+            try {                                                   // cuts: optional (no markers = none)
+                Class<?> hv = Class.forName("zombie.core.skinnedmodel.visual.HumanVisual", false, cl);
+                Class<?> iv = Class.forName("zombie.core.skinnedmodel.visual.ItemVisual", false, cl);
+                vBodyVisuals = hv.getMethod("getBodyVisuals");
+                ivItemType = iv.getMethod("getItemType");
+            } catch (Throwable t) {
+                vBodyVisuals = null;
+                RBSHook.warn("limbs: cut limbs can't be read (" + t + ") - only the ones missing from the start are hidden");
+            }
             ready = true;
             RBSHook.log("limbs ready - hand/forearm/arm/legs/one-leg = " + pHand + "/" + pFore + "/" + pArm + "/" + pLegs + "/" + pLeg1 + " %");
         } catch (Throwable t) {

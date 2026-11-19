@@ -100,6 +100,46 @@ final class Hair {
     /** character -> {1 ours / 0 not, expiry} */
     private static final Map<Object, long[]> wears = Collections.synchronizedMap(new WeakHashMap<>());
     private static final Map<Class<?>, Method> visualGetter = Collections.synchronizedMap(new HashMap<>());
+    private static final Map<Class<?>, Method> femaleGetter = Collections.synchronizedMap(new HashMap<>());
+
+    // ---------------- UI previews (user, 2026-11-19: the hair should sway when the character is turned on the
+    // character creation screen, a new game or after a death) ----------------
+    // The preview is an AnimatedModel with no character (PlayerFit.previewModel); it never walks, and its turns are
+    // jumps of 45 degrees (ISUI3DModel.setDirection: the buttons, or a drag of 40 pixels). Its facing is the model's
+    // angle; the tie is followed as if it were PREVIEW_LEVER further behind the turning axis, so a turn swings the hair
+    // of every style (the skull's centre, the pivot of loose styles, is almost on that axis). The corpse atlas and
+    // mannequins also draw through AnimatedModels, but those never animate (setAnimate(false)): left alone.
+    static final float PREVIEW_LEVER = 0.10f;
+    private static java.lang.reflect.Field amAngle;
+    private static Method amAnimate, amZombie, amIsometric;
+
+    /**
+     * the AnimatedModel of a UI preview this AnimationPlayer animates, or null: not a zombie, and animating or drawn
+     * flat (not isometric). The corpse atlas and mannequins never animate and keep the default isometric view; the
+     * character creation preview is flat (CharacterCreationAvatar: setIsometric(false)) and animates only while the
+     * game is not paused (ISUI3DModel.prerender) - after a death it can be paused.
+     */
+    private static Object previewOf(Object player) {
+        Object am = PlayerFit.previewModel(player);
+        if (am == null) return null;
+        try {
+            if (amAngle == null) {
+                Class<?> c = am.getClass();
+                amAnimate = c.getMethod("isAnimate");
+                amZombie = c.getMethod("isZombie");
+                amIsometric = c.getMethod("isIsometric");
+                java.lang.reflect.Field fa = c.getDeclaredField("angle");
+                fa.setAccessible(true);
+                amAngle = fa;
+            }
+            if ((Boolean) amZombie.invoke(am)) return null;
+            if (!(Boolean) amAnimate.invoke(am) && (Boolean) amIsometric.invoke(am)) return null;
+            return am;
+        } catch (Throwable t) {
+            if (warns++ < 5) RBSHook.warn("hair: UI previews stay still: " + t);
+            return null;
+        }
+    }
     private static volatile Method hairModel;
     private static final ThreadLocal<float[]> M = ThreadLocal.withInitial(() -> new float[16]);
     private static final ThreadLocal<float[]> O = ThreadLocal.withInitial(() -> new float[16]);
@@ -160,8 +200,11 @@ final class Hair {
         try {
             State s = states.get(player);
             Object chr = Jiggle.apCharacter.invoke(player);
-            boolean on = chr != null && Jiggle.enabled && Jiggle.hairPct > 0f && wearsOurs(chr)
-                    && ((RBSHook.zombiesEnabled() && Clean.isZombieWearer(chr)) || Jiggle.isPlayer(chr));
+            // no character: a UI preview (character creation, after a death too; the info window) sways as well
+            Object preview = chr == null ? previewOf(player) : null;
+            boolean on = Jiggle.enabled && Jiggle.hairPct > 0f && (chr != null
+                    ? wearsOurs(chr) && ((RBSHook.zombiesEnabled() && Clean.isZombieWearer(chr)) || Jiggle.isPlayer(chr))
+                    : preview != null && wearsOurs(preview));
             if (!on) {
                 if (s != null) s.on = false;
                 return;
@@ -176,12 +219,13 @@ final class Hair {
                 s = new State();
                 states.put(player, s);
                 if (logs++ < 6) RBSHook.log(String.format(Locale.ROOT, "hair: a %s with our hair - it sways (tie at %.3f, %.3f, %.3f in the bind pose, torso %.3f units%s)",
-                        Jiggle.isPlayer(chr) ? "player" : "zombie", f.tie[0], f.tie[1], f.tie[2], f.L, Jiggle.hairVFlip ? ", v flipped" : ""));
+                        chr == null ? "UI preview (turning it swings the hair)" : Jiggle.isPlayer(chr) ? "player" : "zombie",
+                        f.tie[0], f.tie[1], f.tie[2], f.L, Jiggle.hairVFlip ? ", v flipped" : ""));
             }
-            long[] we = wears.get(chr);
+            long[] we = wears.get(chr != null ? chr : preview);
             s.tied = we != null && we.length > 2 && we[2] == 1;
             s.male = we != null && we.length > 3 && we[3] == 1;
-            step(s, f, player, chr);
+            step(s, f, player, chr, preview);
         } catch (Throwable t) {
             if (warns++ < 5) RBSHook.warn("hair (spring) failed: " + t);
         }
@@ -214,7 +258,12 @@ final class Hair {
         }
         boolean male = false;
         try {
-            male = !(Boolean) Jiggle.chrFemale.invoke(chr);
+            Method fm = femaleGetter.get(c);                    // a character's isFemale, or an AnimatedModel's
+            if (fm == null) {
+                fm = c.getMethod("isFemale");
+                femaleGetter.put(c, fm);
+            }
+            male = !(Boolean) fm.invoke(chr);
         } catch (Throwable t) {
             male = false;
         }
@@ -261,7 +310,7 @@ final class Hair {
         return f;
     }
 
-    private static void step(State s, Frame f, Object player, Object chr) throws Exception {
+    private static void step(State s, Frame f, Object player, Object chr, Object preview) throws Exception {
         float[] m = M.get(), o = O.get();
         Object hm = Jiggle.apModelAt.invoke(player, f.head);
         if (hm == null) return;
@@ -272,16 +321,20 @@ final class Hair {
         float[] tm = xf(m, cm, xf(o, co, f.tie(s), 1f), 1f);
         float k = TORSO_M / f.L;
         float lf = dot(tm, f.fw) * k, ll = dot(tm, f.left) * k, lu = dot(tm, f.up) * k;
-        Object fwd = Jiggle.chrForward.invoke(chr);
+        // the facing and the place: the character's, or a UI preview's angle on the spot (with the lever: see above)
+        Object fwd = chr != null ? Jiggle.chrForward.invoke(chr) : amAngle.get(preview);
         float fx = fwd == null ? 1f : ((Number) Jiggle.v2X.invoke(fwd)).floatValue();
         float fy = fwd == null ? 0f : ((Number) Jiggle.v2Y.invoke(fwd)).floatValue();
         float fl = (float) Math.sqrt(fx * fx + fy * fy);
         if (fl < 1e-4f) return;
         fx /= fl;
         fy /= fl;
+        double px = chr != null ? ((Number) Jiggle.chrX.invoke(chr)).doubleValue() : 0.0;
+        double py = chr != null ? ((Number) Jiggle.chrY.invoke(chr)).doubleValue() : 0.0;
+        float lw = chr != null ? lf : lf - PREVIEW_LEVER;
         // world left of the facing is (fy, -fx) (HeadLook.YAW_SIGN, checked in game), the model's left too
-        double wx = ((Number) Jiggle.chrX.invoke(chr)).doubleValue() + fx * lf + fy * ll;
-        double wy = ((Number) Jiggle.chrY.invoke(chr)).doubleValue() + fy * lf - fx * ll;
+        double wx = px + fx * lw + fy * ll;
+        double wy = py + fy * lw - fx * ll;
         float wz = lu;
         long now = System.nanoTime();
         float dt = s.started ? (now - s.t) / 1e9f : 0f;
@@ -300,8 +353,9 @@ final class Hair {
             s.dtS = 0f;
             java.util.Arrays.fill(s.a, 0f);
             java.util.Arrays.fill(s.b, 0f);
-            s.hit = (Boolean) Jiggle.chrHasHit.invoke(chr);      // already reeling / lying when first seen: no jolt
-            s.floor = (Boolean) Jiggle.chrOnFloor.invoke(chr);
+            // already reeling / lying when first seen: no jolt (a preview is never hit)
+            s.hit = chr != null && (Boolean) Jiggle.chrHasHit.invoke(chr);
+            s.floor = chr != null && (Boolean) Jiggle.chrOnFloor.invoke(chr);
             s.on = true;
             publish(s, f, m, cm, o, co);
             return;
@@ -325,7 +379,7 @@ final class Hair {
             p[5] -= GAIN * dz + ANIM_EXTRA * aU;
         }
         s.wind = Math.min(WIND_MAX, Math.max(0f, WIND * (vF - WIND_FROM)));
-        kicks(s, chr);
+        if (chr != null) kicks(s, chr);
         float lim = s.tied ? MAX_TIED : MAX_STRIPS;
         integrate(s.a, FREQ_A, DAMP_A, dt, -DRAG * GAIN * vF, -DRAG * GAIN * vL, lim);
         integrate(s.b, FREQ_B, DAMP_B, dt, -DRAG * GAIN * vF, -DRAG * GAIN * vL, lim);
