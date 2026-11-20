@@ -119,9 +119,13 @@ final class Hair {
      * character creation preview is flat (CharacterCreationAvatar: setIsometric(false)) and animates only while the
      * game is not paused (ISUI3DModel.prerender) - after a death it can be paused.
      */
-    private static Object previewOf(Object player) {
+    static Object previewOf(Object player) {
         Object am = PlayerFit.previewModel(player);
-        if (am == null) return null;
+        return am != null && uiPreview(am) ? am : null;
+    }
+
+    /** an AnimatedModel that is a UI preview (see previewOf) */
+    static boolean uiPreview(Object am) {
         try {
             if (amAngle == null) {
                 Class<?> c = am.getClass();
@@ -132,12 +136,31 @@ final class Hair {
                 fa.setAccessible(true);
                 amAngle = fa;
             }
-            if ((Boolean) amZombie.invoke(am)) return null;
-            if (!(Boolean) amAnimate.invoke(am) && (Boolean) amIsometric.invoke(am)) return null;
-            return am;
+            if ((Boolean) amZombie.invoke(am)) return false;
+            return (Boolean) amAnimate.invoke(am) || !(Boolean) amIsometric.invoke(am);
         } catch (Throwable t) {
             if (warns++ < 5) RBSHook.warn("hair: UI previews stay still: " + t);
-            return null;
+            return false;
+        }
+    }
+
+    /** the preview animates now (not while the game is paused after a death) */
+    static boolean animating(Object am) {
+        try {
+            return amAnimate != null && (Boolean) amAnimate.invoke(am);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** a UI preview's own visual (its owner an AnimatedModel that is a UI preview; not a zombie's looks) */
+    static boolean previewOfVisual(Object visual) {
+        try {
+            if (visual == null || RBSHook.isZombieVisual(visual)) return false;
+            Object am = RBSHook.visualOwner(visual);
+            return am != null && "AnimatedModel".equals(am.getClass().getSimpleName()) && uiPreview(am);
+        } catch (Throwable t) {
+            return false;
         }
     }
     private static volatile Method hairModel;

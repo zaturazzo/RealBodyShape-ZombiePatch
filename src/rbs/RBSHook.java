@@ -149,6 +149,8 @@ public final class RBSHook {
                 Jiggle.bodyModel(m);
                 return m;
             }
+            // a UI preview with the player's own body (character creation): the shader, for the eyes to blink there
+            if (orig != null && Hair.previewOfVisual(visual)) Jiggle.previewBody(orig);
         } catch (Throwable t) {
             warn("corpse body failed: " + t);
         }

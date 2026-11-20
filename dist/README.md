@@ -1,9 +1,13 @@
-# Real Body Shape – patch v6.8 (Project Zomboid Build 42, Windows)
+# Real Body Shape – patch v6.9 (Project Zomboid Build 42, Windows)
 
-Unofficial companion for the Steam Workshop item **Real Body Shape** (id 3830730496, version 0.3.4 or newer; 0.3.6 for stiff bags and armour; 0.3.9 for the hair and the Sandbox options), which
+Unofficial companion for the Steam Workshop item **Real Body Shape** (id 3830730496, version 0.3.4 or newer; 0.3.6 for stiff bags and armour; 0.3.9 for the hair and the Sandbox options; 0.3.10 for Room in clothes and cut limbs), which
 contains *Real Body Shape*, *Real Body Shape - Zombie Bodies*, *Real Body Shape - Zombie Dismemberment*,
 *Real Body Shape - zombie patch through ZombieBuddy* and a few more optional mods.
-- New in v6.8 (with Real Body Shape 0.3.9): the hairstyles of the optional mod *Real Body Shape - Hair Sway* sway
+- New in v6.9 (with Real Body Shape 0.3.10): Room in clothes - in Options > Mods > Real Body Shape, give clothes
+  more room over any part where skin shows through (per body; tops over trousers or a skirt stay over them, the
+  canteen moves as a whole); companions from NPC mods keep their body and height; with Zombie Dismemberment a hit can
+  take off a zombie's limb (single player); belts, holsters, pouches and straps from other mods sit closer.
+- v6.8 (with Real Body Shape 0.3.9): the hairstyles of the optional mod *Real Body Shape - Hair Sway* sway
   as your character moves; animations carry on when the body changes with weight (no jerk, no stuck sitting pose);
   Zombie Bodies takes its chances by sex and line of work, and its heights, from the Sandbox options; the left hand
   stays on a two-handed melee weapon while swinging. Fixed: a zombie
@@ -37,7 +41,7 @@ Full manual, troubleshooting and source code: https://github.com/zaturazzo/RealB
    `install.bat "D:\path\to\steamapps\common\ProjectZomboid"`. Updating from an older version: just run it, it
    replaces the old entry.
 3. Start the game, enable *Real Body Shape* and *Real Body Shape - Zombie Bodies* (plus *Zombie Dismemberment* if you
-   want), load your save. `%USERPROFILE%\Zomboid\console.txt` should contain `[RBS hook] ready (classpath) v6.8 ...` and
+   want), load your save. `%USERPROFILE%\Zomboid\console.txt` should contain `[RBS hook] ready (classpath) v6.9 ...` and
    `[RealBodyShape] zombie bodies: patch active (classpath), Zombie Bodies mod on`.
 
 - `status.bat` – what is installed, and whether the patch still matches the game version.

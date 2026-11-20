@@ -219,6 +219,22 @@ final class Jiggle {
         }
     }
 
+    /**
+     * the shared body drawn by a UI preview (character creation on the main menu, before any player is in the world):
+     * switched to the shader as a player's would be, so its eyes can blink there (user, 2026-11-19)
+     */
+    static void previewBody(Object model) {
+        if (model == null || failed || !players) return;
+        try {
+            if (!ready) init();
+            if (failed) return;
+            Object female = fieldOf(fFemaleBody);
+            if ((model == female && femalePlayers) || model == fieldOf(fMaleBody)) bodyModel(model);
+        } catch (Throwable t) {
+            RBSHook.warn("jiggle (preview body) failed: " + t);
+        }
+    }
+
     /** the body model the game hands a player: the shared vanilla one, switched once players' bellies are on */
     static void playerBody(Object chr, Object model) {
         if (model == null || failed || !players) return;

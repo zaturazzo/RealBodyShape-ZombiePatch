@@ -111,7 +111,7 @@ final class Eyes {
             if (!ready) init();
             if (!ready || head == null) return Jiggle.identity;
             Object chr = Jiggle.apCharacter.invoke(player);
-            if (chr == null) return Jiggle.identity;
+            if (chr == null) return previewSlot(player, pad);
             St s = perChar.get(chr);
             if (s == null) {
                 s = new St();
@@ -126,6 +126,90 @@ final class Eyes {
             if (warns++ < 5) RBSHook.warn("eyes failed: " + t);
             return Jiggle.identity;
         }
+    }
+
+    // ---------------- UI previews (user, 2026-11-19: the eyes blink on the character creation screen too) ----------------
+    private static Method amVisual;
+
+    /**
+     * slot 55 of a UI preview (character creation, a new game or after a death; the info window): it blinks and its eyes
+     * glance about now and then - nothing else (no stats, no head look). Held while the preview does not animate (the
+     * game paused after a death). A preview of another mod's NPC wearing another head than the chosen one keeps still
+     * (slot 54 is the chosen head's).
+     */
+    private static Object previewSlot(Object player, Jiggle.Pad pad) throws Exception {
+        Object am = Hair.previewOf(player);
+        if (am == null) return Jiggle.identity;
+        if (amVisual == null || amVisual.getDeclaringClass() != am.getClass()) amVisual = am.getClass().getMethod("getHumanVisual");
+        Object[] npc = NpcHeads.previewOf(amVisual.invoke(am));
+        if (npc != null) {
+            String h = (String) npc[2];
+            if (!(h.isEmpty() ? Head.none() : (h + "/").equals(Head.sub()))) return Jiggle.identity;
+        }
+        St s = perChar.get(player);
+        if (s == null) {
+            s = new St();
+            perChar.put(player, s);
+            if (logs < 4) {
+                logs++;
+                RBSHook.log("eyes: a UI preview (character creation, the info window) - it blinks and glances about");
+            }
+        }
+        long now = System.nanoTime();
+        if (now - s.t > 5_000_000L) updatePreview(s, now, Hair.animating(am));
+        if (pad.slot5 == null) pad.slot5 = Jiggle.matrixCtor.newInstance();
+        Jiggle.write(pad.slot5, s.rows);
+        return pad.slot5;
+    }
+
+    /** a preview's blinks and glances (the same timing as a character's, never tired, frightened or looking at anything) */
+    static void updatePreview(St s, long now, boolean running) {
+        float dt = s.t == 0 || !running ? 0f : Math.min(0.1f, (now - s.t) / 1e9f);
+        s.t = now;
+        ThreadLocalRandom rnd = ThreadLocalRandom.current();
+        if (!running) {                                              // held: nothing starts, nor right after
+            s.nextBlink = Math.max(s.nextBlink, now + (long) (rnd.nextDouble(0.5, 2.5) * 1e9));
+            s.nextGlance = Math.max(s.nextGlance, now + (long) (rnd.nextDouble(0.5, 2.0) * 1e9));
+        }
+        if (s.nextBlink == 0) s.nextBlink = now + (long) (rnd.nextDouble(0.5, 3.0) * 1e9);
+        if (running && now >= s.nextBlink && s.blinkAt == 0) {
+            s.blinkAt = now;
+            s.nextBlink = now + (long) (rnd.nextDouble(2.0, 6.0) * 1e9);
+        }
+        float b = 0f;
+        if (s.blinkAt != 0) {
+            float a = (now - s.blinkAt) / 1e9f;
+            if (a < BLINK_CLOSE) b = a / BLINK_CLOSE;
+            else if (a < BLINK_CLOSE + BLINK_HOLD) b = 1f;
+            else if (a < BLINK_CLOSE + BLINK_HOLD + BLINK_OPEN) b = 1f - (a - BLINK_CLOSE - BLINK_HOLD) / BLINK_OPEN;
+            else s.blinkAt = 0;
+        }
+        if (running && now >= s.nextGlance) {                        // a glance now and then, back ahead in between
+            boolean ahead = Math.abs(s.gYaw) > 0.01f || rnd.nextDouble() < 0.35;
+            if (ahead) {
+                s.gYaw = 0f;
+                s.gPitch = 0f;
+                s.nextGlance = now + (long) (rnd.nextDouble(1.5, 5.0) * 1e9);
+            } else {
+                s.gYaw = (float) Math.toRadians(rnd.nextDouble(-14, 14));
+                s.gPitch = (float) Math.toRadians(rnd.nextDouble(-6, 4));
+                s.nextGlance = now + (long) (rnd.nextDouble(0.6, 2.0) * 1e9);
+            }
+        }
+        float wantYaw = Math.max(-maxYaw, Math.min(maxYaw, s.gYaw));
+        float wantPitch = Math.max(-maxDown, Math.min(maxUp, s.gPitch));
+        if (dt > 0f) {
+            float k = 1f - (float) Math.exp(-dt / TAU_EYE);
+            s.yaw += (wantYaw - s.yaw) * k;
+            s.pitch += (wantPitch - s.pitch) * k;
+        }
+        float follow = maxDown > 0f ? LID_FOLLOW * Math.max(0f, -s.pitch) / maxDown : 0f;
+        float[] r = s.rows;
+        r[0] = yawSign * s.yaw;
+        r[1] = s.pitch;
+        r[2] = Math.min(1f, Math.max(b, follow));
+        r[3] = MAGIC;
+        for (int i = 4; i < 16; i++) r[i] = 0f;
     }
 
     // ---------------- what the eyes do ----------------

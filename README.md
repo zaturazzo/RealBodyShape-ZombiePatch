@@ -36,6 +36,20 @@ this patch adds them:
   draws characters with its own shader); a piece of clothing the mod reshapes that another mod replaces with its own
   file (the game loads a .fbx before a .x - Tomb's Player Body - Compatibility's trousers, shorts and skirt) did not
   grow at all - it now gets the rough fit.
+- **Room in clothes (v6.9, mod 0.3.10+):** in Options > Mods > Real Body Shape the player gives clothes more room over
+  any part where skin shows through (chest, back, arms, belly, waist, hips, buttocks, thighs, calves; in mm, one set
+  per body). Every worn piece moves out over that part. Tops worn over trousers or a skirt stay over them, and
+  webbing, fanny packs and the canteen go along; the canteen moves as a whole. Clothes made for the body worn (Tomb's
+  own on Tomb's Player Body) keep their fit.
+- **NPC companions (v6.9, mod 0.3.10+):** companions that NPC mods make out of zombies keep one body and one height
+  (taken from their looks, kept when the mod spawns them again), and their weight can follow what they eat through
+  the mod's Lua. An NPC mod may also pick the body itself with the ModData key `RBS_BodyVariantSet` (0-3).
+- **Cut limbs (v6.9, mod 0.3.10+):** with Zombie Dismemberment, a hit in single player can take off a zombie's hand,
+  forearm, arm or leg (chances by kind of weapon in the Sandbox options); the patch hides the part.
+- **Also in v6.9:** belts, holsters, pouches and straps from other mods sit closer to the body; the head looks ahead
+  while the player does something and glances at a companion when no zombie is in sight; the Hair Sway hairstyles
+  show in the character creation and info previews; on Tomb's Player Body, other mods' clothes grow the way Tomb's
+  body does.
 
 > **Using ZombieBuddy?** You do not need this download. The Workshop item contains the same patch as a ZombieBuddy
 > Java mod: enable **Real Body Shape - zombie patch through ZombieBuddy** in the mod list and you are done
