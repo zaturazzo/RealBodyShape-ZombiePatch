@@ -82,6 +82,12 @@ final class Hair {
         boolean hit, floor;         // last time: in a hit reaction, on the floor
         boolean tied;               // a ponytail: its hair bends about the tie, other styles about the skull's centre
         boolean male;               // a man's head: his tie, skull and neck (the shader's marker)
+        // a check (user, 2026-11-21: the hair jerked in Viewpoint's views): the player's updates in a minute, and in
+        // how many the position / the head's pose were the same as in the one before
+        int dUpd, dPosSame, dPoseSame, dLogs;
+        long dSince;
+        double rawX, rawY;
+        float rawF, rawL, rawU;
     }
 
     /** the animation skeleton's head, offset and bind-pose frame */
@@ -214,6 +220,50 @@ final class Hair {
         if (pad.slot3 == null) pad.slot3 = Jiggle.matrixCtor.newInstance();
         Jiggle.write(pad.slot3, s.rows);
         return pad.slot3;
+    }
+
+    /**
+     * Project Viewpoint (ViewpointShader): its renderer keeps three rows of each slot and draws every mesh with one
+     * shader (user, 2026-11-21: "ทรงผม ไม่ขยับคับ" in its views). Slot 51 of our hair models only carries what it drops
+     * of slot 57 - row 0 = row 3 (the pivot, how much gravity) - and row 1 = 5151 (z), 51 (w) as the marker that the
+     * mesh is one of ours (in the game only those get sbj_HairSway; other meshes' normals are not ours to read).
+     */
+    static final int SLOT_VP = 51;
+    private static final ThreadLocal<float[]> VP = ThreadLocal.withInitial(() -> new float[16]);
+    private static final Map<Object, Boolean> ourMesh = Collections.synchronizedMap(new WeakHashMap<>());
+
+    static Object vpSlot(Object player, Object data, Jiggle.Pad pad) throws Exception {
+        State s = states.get(player);
+        if (s == null || !s.on || !ours(player, data)) return Jiggle.identity;
+        float[] v = VP.get();
+        System.arraycopy(s.rows, 12, v, 0, 4);
+        v[4] = 0f; v[5] = 0f; v[6] = 5151f; v[7] = 51f;
+        for (int i = 8; i < 16; i++) v[i] = 0f;
+        if (pad.slotHairVp == null) pad.slotHairVp = Jiggle.matrixCtor.newInstance();
+        Jiggle.write(pad.slotHairVp, v);
+        if (!vpSaid) {
+            vpSaid = true;
+            RBSHook.log("viewpoint: our hair goes out in palette slot 51 too (" + MeshInfo.path(player, data) + ") - it sways in its views");
+        }
+        return pad.slotHairVp;
+    }
+
+    private static volatile boolean vpSaid;
+
+    /** this mesh is one of our hair models (its file name has MARK, as shaderFor's rule); false while unknown */
+    private static boolean ours(Object player, Object data) {
+        if (data == null) return false;
+        Boolean o = ourMesh.get(data);
+        if (o != null) return o;
+        try {
+            String p = MeshInfo.path(player, data);
+            if (p == null) return false;
+            o = p.toLowerCase(Locale.ROOT).replace('\\', '/').contains(MARK);
+            ourMesh.put(data, o);
+            return o;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     // ---------------- springs (RBSHook.afterUpdateSkinTransforms, after Jiggle) ----------------
@@ -354,6 +404,14 @@ final class Hair {
         fy /= fl;
         double px = chr != null ? ((Number) Jiggle.chrX.invoke(chr)).doubleValue() : 0.0;
         double py = chr != null ? ((Number) Jiggle.chrY.invoke(chr)).doubleValue() : 0.0;
+        if (chr != null && s.dLogs < 3 && Jiggle.isPlayer(chr)) check(s, px, py, lf, ll, lu);
+        if (chr != null) {                                      // followed smoothly between the game's ticks (Place)
+            double[] pl = Place.at(chr, px, py, fx, fy, System.nanoTime());
+            px = pl[0];
+            py = pl[1];
+            fx = (float) pl[2];
+            fy = (float) pl[3];
+        }
         float lw = chr != null ? lf : lf - PREVIEW_LEVER;
         // world left of the facing is (fy, -fx) (HeadLook.YAW_SIGN, checked in game), the model's left too
         double wx = px + fx * lw + fy * ll;
@@ -421,6 +479,25 @@ final class Hair {
         s.mvU = mvU;
         s.on = true;
         publish(s, f, m, cm, o, co);
+    }
+
+    private static void check(State s, double px, double py, float lf, float ll, float lu) {
+        long now = System.nanoTime();
+        if (s.dUpd == 0) s.dSince = now;
+        s.dUpd++;
+        if (px == s.rawX && py == s.rawY) s.dPosSame++;
+        if (lf == s.rawF && ll == s.rawL && lu == s.rawU) s.dPoseSame++;
+        s.rawX = px;
+        s.rawY = py;
+        s.rawF = lf;
+        s.rawL = ll;
+        s.rawU = lu;
+        if (now - s.dSince >= 60_000_000_000L) {
+            s.dLogs++;
+            RBSHook.log("hair check: the player's springs updated " + s.dUpd + " time(s) in a minute; the position was the same as the update before in "
+                    + s.dPosSame + ", the head's pose in " + s.dPoseSame + (s.dLogs >= 3 ? " - checks stop here" : ""));
+            s.dUpd = s.dPosSame = s.dPoseSame = 0;
+        }
     }
 
     /** a hit throws the hair the way the blow came from (from the front the head is pushed back, the hair keeps

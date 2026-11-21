@@ -201,6 +201,37 @@ final class Jiggle {
         Object slot, slot2, slot3;      // slot3: the hair's springs (Hair.SLOT)
         Object slot4;                   // the weather (Env.SLOT)
         Object slot5, slot6;            // the eyes: this character's (Eyes.SLOT), the head's (Eyes.SLOT_HEAD)
+        Object slotVp;                  // Project Viewpoint's copy (SLOT_VP)
+        Object slotHairVp;              // and of the hair's row 3 (Hair.SLOT_VP)
+    }
+
+    /**
+     * Project Viewpoint's renderer keeps three rows of each palette slot (ViewpointShader): slot 53 carries what it
+     * drops of ours - row 0 = slot 59's row 3 (up axis, buttocks forward), row 1 = slot 58's row 3 (the thigh and
+     * upper arm bones) - and row 2 = gear (x, RBSJiggleBag's rule), 5353 (z), 53 (w) as its marker. Written only once
+     * our push is in Viewpoint's shader; the game's shaders never read it.
+     */
+    static final int SLOT_VP = 53;
+    /** identity: Viewpoint moves the player's palette slot by slot to place the feet; the shader recovers that matrix here */
+    static final int SLOT_VP_REF = 52;
+    private static volatile boolean vpSaid;
+    private static final ThreadLocal<float[]> ROWSVP = ThreadLocal.withInitial(() -> new float[16]);
+    private static final java.util.Map<Object, Boolean> gearMesh = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    /** this mesh is gear (bags, packs, webbing, canteens, chest rigs, armour: RBSJiggleBag), by its path; false while unknown */
+    private static boolean gearOf(Object player, Object data) {
+        if (data == null) return false;
+        Boolean g = gearMesh.get(data);
+        if (g != null) return g;
+        try {
+            String p = MeshInfo.path(player, data);
+            if (p == null) return false;
+            g = isGear(p.toLowerCase(Locale.ROOT).replace('\\', '/'));
+            gearMesh.put(data, g);
+            return g;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     // ---------------- models: which ones draw with the shader ----------------
@@ -244,12 +275,35 @@ final class Jiggle {
             // another mod's body (e.g. a child's): it and its clothes stay as they are
             Object female = fieldOf(fFemaleBody);
             boolean shared = (model == female && femalePlayers) || model == fieldOf(fMaleBody);
-            sharedBody.put(chr, shared);
+            Boolean was = sharedBody.put(chr, shared);
+            if (!shared && !Boolean.FALSE.equals(was) && !(Boolean) chrAnimal.invoke(chr) && bodyLogs++ < 4) {
+                // said once per player: another mod's body (e.g. a child's) keeps the game's shaders on it and its pieces
+                RBSHook.log("jiggle: the player's body is not the game's shared one - it and its clothes and hair keep their own"
+                        + " shaders: given " + modelName(model) + ", the game's female " + modelName(female) + ", male "
+                        + modelName(fieldOf(fMaleBody)) + (femalePlayers ? "" : " (female_players=0)"));
+            }
             if (!shared) return;
             bodyModel(model);
         } catch (Throwable t) {
             RBSHook.warn("jiggle (player body) failed: " + t);
         }
+    }
+
+    private static int bodyLogs;
+
+    /** a model for the log: its mesh's path and which object it is */
+    static String modelName(Object model) {
+        if (model == null) return "none";
+        String p = null;
+        try {
+            Object mesh = model.getClass().getField("mesh").get(model);
+            if (mesh != null) {
+                Object ap = mesh.getClass().getMethod("getPath").invoke(mesh);
+                if (ap != null) p = String.valueOf(ap.getClass().getMethod("getPath").invoke(ap));
+                if (p == null || p.isEmpty() || "null".equals(p)) p = String.valueOf(mesh.getClass().getField("fullPath").get(mesh));
+            }
+        } catch (Throwable ignored) {}
+        return (p == null ? "?" : p) + " #" + Integer.toHexString(System.identityHashCode(model));
     }
 
     /** a player (not a zombie, not an animal): their clothes get the shader too */
@@ -432,6 +486,7 @@ final class Jiggle {
             Object[] out = pad.out;
             System.arraycopy(tr, 0, out, 0, tr.length);
             if (tr.length <= Hair.SLOT) out[Hair.SLOT] = Hair.slot(player, pad);   // identity unless its hair sways
+            if (tr.length <= Hair.SLOT_VP && ViewpointShader.injected) out[Hair.SLOT_VP] = Hair.vpSlot(player, data, pad);
             if (tr.length <= Env.SLOT) out[Env.SLOT] = Env.slot(player, pad);      // the wind (not used by a shader yet)
             if (tr.length <= Eyes.SLOT_HEAD) {                  // eyeballs (a head mod's): identity without one
                 // another mod's NPC wearing a head other than the chosen one (NpcHeads): the eyes' places in slot 54
@@ -452,18 +507,22 @@ final class Jiggle {
             if (s == null || !s.on) {
                 out[SLOT] = zero;
                 if (tr.length <= SLOT2) out[SLOT2] = identity;
+                if (tr.length <= SLOT_VP) out[SLOT_VP] = identity;
                 return out;
             }
+            float[] c59;
             if (s.sit > 0f && data != null && data == s.bodyData) {
                 float[] r59 = ROWS59.get();
                 System.arraycopy(s.rows, 0, r59, 0, 16);
                 r59[3] = 1f + s.sit;                            // the body mesh only: its web folds away
-                write(pad.slot, r59);
+                c59 = r59;
                 if (sitLogs++ == 0) RBSHook.log("jiggle: sitting - the web between the thighs folds away (body mesh recognised)");
             } else {
-                write(pad.slot, space == null ? s.rows : MeshSpace.jiggleRows59(s.rows, space));
+                c59 = space == null ? s.rows : MeshSpace.jiggleRows59(s.rows, space);
             }
+            write(pad.slot, c59);
             out[SLOT] = pad.slot;
+            float[] c58 = null;
             if (tr.length <= SLOT2) {                           // the extras, with this mesh's own bone numbers
                 float[] b = bonesOf(data), r = ROWS2.get();
                 System.arraycopy(s.rows2, 0, r, 0, 16);
@@ -472,8 +531,29 @@ final class Jiggle {
                 r[13] = b[2];
                 r[14] = b[3];
                 r[15] = b[4];
-                write(pad.slot2, space == null ? r : MeshSpace.jiggleRows58(r, space));
+                c58 = space == null ? r : MeshSpace.jiggleRows58(r, space);
+                write(pad.slot2, c58);
                 out[SLOT2] = pad.slot2;
+            }
+            if (tr.length <= SLOT_VP && ViewpointShader.injected) {   // Project Viewpoint's copy of what it drops
+                // its reference (ViewpointShader): identity here, moved with the rest when Viewpoint places the feet
+                if (tr.length <= SLOT_VP_REF) out[SLOT_VP_REF] = identity;
+                if (z[0] == 2 && !vpSaid) {
+                    vpSaid = true;
+                    RBSHook.log("viewpoint: the player's soft body goes out in palette slot 53 (52 = the reference for its foot placement)");
+                }
+                float[] v = ROWSVP.get();
+                System.arraycopy(c59, 12, v, 0, 4);
+                if (c58 != null) System.arraycopy(c58, 12, v, 4, 4);
+                else { v[4] = -1f; v[5] = -1f; v[6] = -1f; v[7] = -1f; }
+                v[8] = gearOf(player, data) ? 1f : 0f;
+                v[9] = 0f;
+                v[10] = 5353f;
+                v[11] = 53f;
+                v[12] = 0f; v[13] = 0f; v[14] = 0f; v[15] = 0f;
+                if (pad.slotVp == null) pad.slotVp = matrixCtor.newInstance();
+                write(pad.slotVp, v);
+                out[SLOT_VP] = pad.slotVp;
             }
             return out;
         } catch (Throwable e) {
@@ -740,6 +820,15 @@ final class Jiggle {
         float aF = 0f;
         // ... plus how far the zombie moved over the ground, along where it faces
         double wx = ((Number) chrX.invoke(chr)).doubleValue(), wy = ((Number) chrY.invoke(chr)).doubleValue();
+        Object fwd = chrForward.invoke(chr);
+        float fx = fwd == null ? 0f : ((Number) v2X.invoke(fwd)).floatValue(), fy = fwd == null ? 0f : ((Number) v2Y.invoke(fwd)).floatValue();
+        if (fx != 0f || fy != 0f) {                             // followed smoothly between the game's ticks (Place)
+            double[] pl = Place.at(chr, wx, wy, fx, fy, now);
+            wx = pl[0];
+            wy = pl[1];
+            fx = (float) pl[2];
+            fy = (float) pl[3];
+        }
         float dt = s.started ? (now - s.t) / 1e9f : 0f;
         if (!s.started || dt <= 0f || dt > 0.25f || Math.abs(wx - s.wx) + Math.abs(wy - s.wy) > 2.0) {
             s.started = true;
@@ -765,8 +854,6 @@ final class Jiggle {
         float dtRaw = dt;
         s.dtS = s.dtS <= 0f ? dt : s.dtS + (dt - s.dtS) * 0.1f;
         dt = Math.max(0.005f, Math.min(0.1f, s.dtS));
-        Object fwd = chrForward.invoke(chr);
-        float fx = fwd == null ? 0f : ((Number) v2X.invoke(fwd)).floatValue(), fy = fwd == null ? 0f : ((Number) v2Y.invoke(fwd)).floatValue();
         float ground = (float) ((wx - s.wx) * fx + (wy - s.wy) * fy) * M_TO_L;
         float rawU = (aU - s.aU) / dt, rawF = (aF - s.aF + ground) / dt;
         float k = 1f - (float) Math.exp(-dt / SPEED_SMOOTH);

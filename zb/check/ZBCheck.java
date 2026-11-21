@@ -35,6 +35,13 @@ public class ZBCheck {
                 try {
                     target = Class.forName(p.className(), false, cl);
                 } catch (Throwable t) {
+                    // another mod's class (Project Viewpoint): checked only with its jar on the classpath (zb_build adds
+                    // it when installed); without it the patch never applies in game either
+                    if (p.className().startsWith("viewpoint.")) {
+                        System.out.println("SKIP " + c.getSimpleName() + ": " + p.className() + " (another mod's, its jar not here)");
+                        patches--;
+                        continue;
+                    }
                     System.out.println("FAIL " + c.getSimpleName() + ": target class " + p.className() + " - " + t);
                     fails++;
                     continue;

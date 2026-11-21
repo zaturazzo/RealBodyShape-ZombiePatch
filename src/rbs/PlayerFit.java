@@ -87,6 +87,23 @@ final class PlayerFit {
      * Tomb's table is in use. A top over a bottom that the room moved out still takes its room and the extra.
      */
     private static volatile Set<String> fits = Collections.emptySet();
+    /**
+     * A single piece's extra room (user, 2026-11-20: a Frockin' short skirt still showed skin at the front of the thigh
+     * with the thighs at 30 mm, other clothes fine at 14-15 - the skirt is tied mostly to the pelvis there, the skin to
+     * the thigh, which swings in the idle stance; 2026-11-21 "แล้ว + ไปจากค่ากลาง ... ไม่มีก็ไม่ต้องบวก"): piece=model|cm,...
+     * (Allowance.REGIONS order) from the right-click window on a worn piece, the body worn's set. That model takes the
+     * body's room (allow=) PLUS these; a piece made for the body worn takes only these; a top over a moved bottom still
+     * gets the over-extra on top.
+     */
+    private static volatile Map<String, float[]> pieceCm = Collections.emptyMap();
+    /**
+     * The gear over the clothes (the ALICE webbing, fanny packs, the ammo strap, a canteen, a shoulder holster: gear=
+     * models) takes gearroom= (cm): the most of what every other piece worn takes, part by part - the mod works it out
+     * (RealBodyShapeStyle.lua roomGear; user, 2026-11-21: by how far all the clothes under it moved out). Its own extra
+     * (piece=) on top; no body's room, no over-extra besides. null: no such line.
+     */
+    private static volatile float[] gearCm = null;
+    private static volatile Set<String> gear = Collections.emptySet();
 
     /** this piece keeps its fit: made for the body worn */
     private static boolean madeForBody(String path, int sex) {
@@ -95,7 +112,23 @@ final class PlayerFit {
         return tomb[sex] != null && tombMade(path);
     }
 
-    /** some bottom worn takes room (one not made for the body worn): the tops over it need the extra */
+    /** the body's room plus this piece's extra (piece=), or the body's alone when it has none */
+    static float[] roomOf(float[] body, float[] own) {
+        if (own == null) return body;
+        float[] r = body.clone();
+        for (int i = 0; i < r.length && i < own.length; i++) r[i] += own[i];
+        return r;
+    }
+
+    /** any room in clothes at all: the body's, or some piece's own */
+    private static boolean roomAny() {
+        return Allowance.any(allowCm) || !pieceCm.isEmpty() || (gearCm != null && Allowance.any(gearCm));
+    }
+
+    /**
+     * some bottom worn takes the body's room (one not made for the body worn): the tops over it need the extra. A
+     * bottom's own extra (piece=) does not count: it is for that piece alone (user, 2026-11-21)
+     */
     private static boolean bottomMoved(int sex) {
         for (String b : bottoms) if (!madeForBody(b, sex)) return true;
         return false;
@@ -131,7 +164,7 @@ final class PlayerFit {
         if (!ready) init();
         if (failed) return;
         if (System.nanoTime() >= nextCheck) load();
-        if (!on && !Allowance.any(allowCm)) return;
+        if (!on && !roomAny()) return;
         Object chr = apCharacter.invoke(player);
         boolean female;
         Object inst;
@@ -139,8 +172,7 @@ final class PlayerFit {
             // a UI preview of the player (the character info window): an AnimatedModel showing that character
             Object am = previews.get(player);
             if (am == null) return;
-            Object who = amCharacter.invoke(am);
-            if (who == null || !playerClass.isInstance(who) || (Boolean) chrAnimal.invoke(who)) return;
+            if (!previewOfPlayer(am)) return;
             female = (Boolean) amFemale.invoke(am);
             inst = fAmInstance.get(am);
         } else {
@@ -158,7 +190,7 @@ final class PlayerFit {
         int kind = kind(player, data);
         if (kind == 0) return;
         boolean table = kind == 1 && on;                       // the rough fit: other mods' pieces, with its mod on
-        if (!table && !Allowance.any(allowCm)) return;         // else only the room in clothes, when there is any
+        if (!table && !roomAny()) return;                      // else only the room in clothes, when there is any
         if (!Fit.ensureReady() || !Fit.ensureLayout(t)) return;
         float[][] maps;
         try {
@@ -323,12 +355,16 @@ final class PlayerFit {
         String path = MeshInfo.path(player, data);
         float f = tight(path) ? TIGHT : 1f;
         Map<String, float[]> byName = new HashMap<>();
-        float[] room = allowCm;
-        if (path != null && over.contains(path) && Allowance.any(overCm) && bottomMoved(sex)) {   // a top over a moved bottom
+        float[] own = path == null ? null : pieceCm.get(path);    // this piece's extra (right-click), or none
+        float[] room = roomOf(allowCm, own);                      // the body's, plus that
+        float[] gc = gearCm;
+        if (path != null && gc != null && gear.contains(path)) {
+            room = roomOf(gc, own);                               // gear: what the clothes under it reach, plus its extra
+        } else if (path != null && over.contains(path) && Allowance.any(overCm) && bottomMoved(sex)) {   // a top over a moved bottom
             room = room.clone();
             for (int i = 0; i < room.length && i < overCm.length; i++) room[i] += overCm[i];
         } else if (madeForBody(path, sex)) {
-            room = null;                                          // made for this body: as it is
+            room = own;                                           // made for this body: as it is, plus only its extra
         }
         // a rigid piece (a canteen): its middle moves out, the piece is not stretched (only for a mesh in the game's own
         // frame - another mod's in a space of its own would get the move of the wrong point)
@@ -526,13 +562,31 @@ final class PlayerFit {
     }
 
     /** allow=belly,waist,hips,butt,thighs,calves (cm, 0 .. 5 each; a bad number counts as 0) */
-    private static float[] allowValues(String v) {
+    /** one piece= row (model|cm,cm,... in Allowance.REGIONS order) into m; a row that does not read is left out */
+    static boolean pieceRow(String v, Map<String, float[]> m) {
+        int bar = v.lastIndexOf('|');
+        if (bar <= 0 || bar >= v.length() - 1) return false;
+        String path = MeshInfo.norm(v.substring(0, bar).trim());
+        if (path.isEmpty()) return false;
+        m.put(path, pieceValues(v.substring(bar + 1)));
+        return true;
+    }
+
+    /** a piece's extra: cm, -2 .. +5 (user, 2026-11-21: "ปรับได้ -2 ถึง +5" - less room for a piece too big as well) */
+    static float[] pieceValues(String v) { return rangeValues(v, -2f, 5f); }
+
+    private static float[] allowValues(String v) { return rangeValues(v, 0f, 5f); }
+
+    /** the gear's room (gearroom=): the most of the pieces under it - the body's + a piece's own + the tops' extra */
+    static float[] gearValues(String v) { return rangeValues(v, 0f, 15f); }
+
+    private static float[] rangeValues(String v, float lo, float hi) {
         float[] out = new float[Allowance.REGIONS.length];
         String[] parts = v.split(",");
         for (int i = 0; i < parts.length && i < out.length; i++) {
             try {
                 float x = Float.parseFloat(parts[i].trim());
-                out[i] = Float.isFinite(x) ? Math.max(0f, Math.min(5f, x)) : 0f;
+                out[i] = Float.isFinite(x) ? Math.max(lo, Math.min(hi, x)) : 0f;
             } catch (NumberFormatException ignored) {
                 out[i] = 0f;
             }
@@ -576,7 +630,9 @@ final class PlayerFit {
                 float[] tg = null;
                 float[] al = new float[Allowance.REGIONS.length], ao = new float[Allowance.REGIONS.length];
                 Set<String> ov = new HashSet<>(), bo = new HashSet<>(), fi = new HashSet<>();
-                Map<String, float[]> an = new HashMap<>();
+                Map<String, float[]> an = new HashMap<>(), pc = new HashMap<>();
+                Set<String> ge = new HashSet<>();
+                float[] gr = null;
                 int tRows = 0, tBad = 0;
                 if (cm > 0 && cm + 5000 >= liveSince) {           // written in this session: the mod is on
                     for (String line : Files.readAllLines(cfg, StandardCharsets.UTF_8)) {
@@ -598,6 +654,9 @@ final class PlayerFit {
                         else if (key.equals("bottom") && !v.isEmpty()) bo.add(MeshInfo.norm(v));
                         else if (key.equals("fits") && !v.isEmpty()) fi.add(MeshInfo.norm(v));
                         else if (key.equals("rigid")) rigidRow(v, an);
+                        else if (key.equals("piece")) pieceRow(v, pc);
+                        else if (key.equals("gearroom")) gr = gearValues(v);
+                        else if (key.equals("gear") && !v.isEmpty()) ge.add(MeshInfo.norm(v));
                     }
                 }
                 anchors = an;
@@ -606,6 +665,24 @@ final class PlayerFit {
                 over = ov;
                 bottoms = bo;
                 fits = fi;
+                pieceCm = pc;
+                gear = ge;
+                gearCm = gr;
+                if (gr != null && !ge.isEmpty()) {
+                    StringBuilder sb = new StringBuilder("room in clothes, the gear on the clothes (the most of what it sits on):");
+                    for (int i = 0; i < gr.length; i++) sb.append(String.format(Locale.ROOT, " %s %.1f cm", Allowance.REGIONS[i], gr[i]));
+                    RBSHook.log(sb.append(" - ").append(ge).toString());
+                }
+                if (!pc.isEmpty()) {
+                    StringBuilder sb = new StringBuilder("room in clothes, extra for single pieces, on top of the body's:");
+                    for (Map.Entry<String, float[]> e : pc.entrySet()) {
+                        sb.append(' ').append(e.getKey()).append(" (");
+                        float[] c = e.getValue();
+                        for (int i = 0; i < c.length; i++) sb.append(i == 0 ? "" : ",").append(String.format(Locale.ROOT, "%.1f", c[i]));
+                        sb.append(" cm)");
+                    }
+                    RBSHook.log(sb.toString());
+                }
                 if (Allowance.any(al)) {
                     StringBuilder sb = new StringBuilder("room in clothes:");
                     for (int i = 0; i < al.length; i++) sb.append(String.format(Locale.ROOT, " %s %.1f cm", Allowance.REGIONS[i], al[i]));
@@ -694,6 +771,19 @@ final class PlayerFit {
         }
     }
 
+    /**
+     * a preview showing the player: the character info window (its character a player, not an animal), or the
+     * character creation screen - a new game or after a death, no character yet (dandark, 2026-11-21: Tomb's body
+     * with the game's jeans shorts showed the thighs through them there, fine once in game). That one is told by
+     * Hair.uiPreview (flat or animating, not a zombie); the corpse atlas and mannequins have no character either but
+     * never animate and stay isometric: left alone. Its shape is the one the screen built (RealBodyShape_built.txt).
+     */
+    private static boolean previewOfPlayer(Object am) throws Exception {
+        Object who = amCharacter.invoke(am);
+        if (who == null) return Hair.uiPreview(am);
+        return playerClass.isInstance(who) && !(Boolean) chrAnimal.invoke(who);
+    }
+
     /** the AnimatedModel this AnimationPlayer animates, or null (for Hair: the previews of character creation...) */
     static Object previewModel(Object player) {
         return player == null ? null : previews.get(player);
@@ -704,8 +794,7 @@ final class PlayerFit {
         Object am = player == null ? null : previews.get(player);
         if (am == null || fAmInstance == null) return null;
         try {
-            Object who = amCharacter.invoke(am);
-            return who != null && playerClass != null && playerClass.isInstance(who) ? fAmInstance.get(am) : null;
+            return playerClass != null && previewOfPlayer(am) ? fAmInstance.get(am) : null;
         } catch (Throwable e) {
             return null;
         }
