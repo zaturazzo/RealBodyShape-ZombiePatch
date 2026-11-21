@@ -168,11 +168,6 @@ public final class RBSHook {
         return ViewpointShader.source(name, src);
     }
 
-    /** Project Viewpoint queued a model to draw (ZombieBuddy build only): a check of our slots in its palette */
-    public static void viewpointDraw(Object draws, Object instance, int palette) {
-        ViewpointShader.draw(draws, instance, palette);
-    }
-
     public static Object afterSkinTransforms(Object player, Object data, Object t) {
         try {
             Fit.apply(player, data, t);

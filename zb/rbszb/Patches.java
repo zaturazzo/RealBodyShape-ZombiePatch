@@ -140,21 +140,6 @@ public final class Patches {
         }
     }
 
-    /**
-     * Project Viewpoint queued a model to draw (ZombieBuddy build only): the first few of the player's are checked for our
-     * soft body's slots in the palette it will upload (ViewpointShader.draw - a few log lines, then it stops).
-     */
-    @Patch(className = "viewpoint.render.ModelDraws", methodName = "add", strictMatch = true)
-    public static class ViewpointDrawAdd {
-        @Patch.OnExit
-        public static void exit(@Patch.This Object draws, @Patch.Argument(0) zombie.core.skinnedmodel.model.ModelMesh mesh,
-                                @Patch.Argument(1) ModelInstance instance, @Patch.Argument(2) zombie.core.textures.Texture tex,
-                                @Patch.Argument(3) org.joml.Matrix4f place, @Patch.Argument(4) int palette,
-                                @Patch.Argument(5) int shadowPalette, @Patch.Argument(6) int cull, @Patch.Argument(7) int flags) {
-            RBSHook.viewpointDraw(draws, instance, palette);
-        }
-    }
-
     @Patch(className = "zombie.core.skinnedmodel.model.ModelInstanceTextureCreator", methodName = "init", strictMatch = true)
     public static class TextureCreatorInit {
         @Patch.OnExit

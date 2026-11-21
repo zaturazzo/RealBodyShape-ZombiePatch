@@ -82,12 +82,6 @@ final class Hair {
         boolean hit, floor;         // last time: in a hit reaction, on the floor
         boolean tied;               // a ponytail: its hair bends about the tie, other styles about the skull's centre
         boolean male;               // a man's head: his tie, skull and neck (the shader's marker)
-        // a check (user, 2026-11-21: the hair jerked in Viewpoint's views): the player's updates in a minute, and in
-        // how many the position / the head's pose were the same as in the one before
-        int dUpd, dPosSame, dPoseSame, dLogs;
-        long dSince;
-        double rawX, rawY;
-        float rawF, rawL, rawU;
     }
 
     /** the animation skeleton's head, offset and bind-pose frame */
@@ -404,7 +398,6 @@ final class Hair {
         fy /= fl;
         double px = chr != null ? ((Number) Jiggle.chrX.invoke(chr)).doubleValue() : 0.0;
         double py = chr != null ? ((Number) Jiggle.chrY.invoke(chr)).doubleValue() : 0.0;
-        if (chr != null && s.dLogs < 3 && Jiggle.isPlayer(chr)) check(s, px, py, lf, ll, lu);
         if (chr != null) {                                      // followed smoothly between the game's ticks (Place)
             double[] pl = Place.at(chr, px, py, fx, fy, System.nanoTime());
             px = pl[0];
@@ -479,25 +472,6 @@ final class Hair {
         s.mvU = mvU;
         s.on = true;
         publish(s, f, m, cm, o, co);
-    }
-
-    private static void check(State s, double px, double py, float lf, float ll, float lu) {
-        long now = System.nanoTime();
-        if (s.dUpd == 0) s.dSince = now;
-        s.dUpd++;
-        if (px == s.rawX && py == s.rawY) s.dPosSame++;
-        if (lf == s.rawF && ll == s.rawL && lu == s.rawU) s.dPoseSame++;
-        s.rawX = px;
-        s.rawY = py;
-        s.rawF = lf;
-        s.rawL = ll;
-        s.rawU = lu;
-        if (now - s.dSince >= 60_000_000_000L) {
-            s.dLogs++;
-            RBSHook.log("hair check: the player's springs updated " + s.dUpd + " time(s) in a minute; the position was the same as the update before in "
-                    + s.dPosSame + ", the head's pose in " + s.dPoseSame + (s.dLogs >= 3 ? " - checks stop here" : ""));
-            s.dUpd = s.dPosSame = s.dPoseSame = 0;
-        }
     }
 
     /** a hit throws the hair the way the blow came from (from the front the head is pushed back, the hair keeps
