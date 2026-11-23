@@ -572,8 +572,9 @@ final class PlayerFit {
         return true;
     }
 
-    /** a piece's extra: cm, -2 .. +5 (user, 2026-11-21: "ปรับได้ -2 ถึง +5" - less room for a piece too big as well) */
-    static float[] pieceValues(String v) { return rangeValues(v, -2f, 5f); }
+    /** a piece's extra: cm, -3 .. +5 (user, 2026-11-21: "ปรับได้ -2 ถึง +5" - less room for a piece too big as well;
+     *  2026-11-22 "รายชิ้นเป็น -3 +5"). The body's own room (allow=) stays 0 .. 5: below 0 every piece would tighten */
+    static float[] pieceValues(String v) { return rangeValues(v, -3f, 5f); }
 
     private static float[] allowValues(String v) { return rangeValues(v, 0f, 5f); }
 
