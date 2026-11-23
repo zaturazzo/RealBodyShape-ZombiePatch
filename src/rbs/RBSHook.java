@@ -946,6 +946,28 @@ public final class RBSHook {
         return storedVariant(owner, CHOSEN_KEY);
     }
 
+    /**
+     * ModData beside CHOSEN_KEY: how far (0..1) the body is drawn from the chosen variant toward the next one. The mod's
+     * Lua writes it for an NPC whose weight it keeps (RealBodyShape.npcStepForKg: 14 bodies instead of 4, user
+     * 2026-11-22 - 80 and 85 kg looked 27 kg apart). Fit draws it with the chosen variant, its body and clothes moved
+     * that far by the per-bone maps: no files.
+     */
+    static final String BLEND_KEY = "RBS_BodyBlend";
+    /** a blend is read in these steps (1/15: the Lua's thirds and fifths of the way land on them) */
+    static final int BLEND_STEPS = 15;
+
+    /** a live character drawn between two bodies: a chosen body below Obese and BLEND_KEY above 0 -> the step
+     *  (1..BLEND_STEPS-1) toward the next body, else 0 (read anew, like the chosen body: Fit asks every two seconds) */
+    static int blendStep(Object visual) {
+        Object owner = ownerOf(visual);
+        if (owner == null || chrClass == null || !chrClass.isInstance(owner)) return 0;
+        int chosen = storedVariant(owner, CHOSEN_KEY);
+        if (chosen < 0 || chosen >= NAMES.length - 1) return 0;
+        double t = modDataNumber(owner, BLEND_KEY);
+        if (!(t > 0)) return 0;                                    // none, NaN
+        return (int) Math.max(0, Math.min(BLEND_STEPS - 1, Math.round(t * BLEND_STEPS)));
+    }
+
     /** the outfit's name of a visual (in memory: a corpse loaded from a save has none), or null */
     private static String outfitOfVisual(Object visual) {
         try {

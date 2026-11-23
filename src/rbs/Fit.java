@@ -19,15 +19,22 @@ import java.util.WeakHashMap;
  * The game caches skin matrices and only recomputes them when its pose changed, so the matrices written here are
  * remembered and a call that finds them unchanged leaves them alone (the map must never be applied twice).
  * Corpses drawn by DeadBodyAtlas are handled the same way, through the visual Limbs remembers for AnimatedModel.
+ * An NPC drawn part of the way between two bodies (RBSHook.blendStep, 2026-11-22) wears the variant below; its clothes
+ * get the two variants' maps mixed that far (each affine), and its body the map from the variant below to that mix -
+ * 14 NPC bodies from the 4 files.
  */
 final class Fit {
     private static volatile boolean failed, ready;
     private static Method apCharacter, mStore, mLoad;
     private static Field fModelMesh, fMeshSkinning, fBoneIndices;
 
-    /** character -> {variant model, sex*4+variant} with an expiry, like Limbs */
+    /** a key: sex*4*Q + variant*Q + step toward the next variant (0..Q-1, 0 = the variant itself); the body's own maps
+     *  under BODY + key */
+    private static final int Q = RBSHook.BLEND_STEPS, KEYS = 2 * 4 * Q, BODY = KEYS;
+
+    /** character -> {variant model, key} with an expiry, like Limbs */
     private static final Map<Object, Object[]> byChar = Collections.synchronizedMap(new WeakHashMap<>());
-    /** SkinningData -> per sex/variant: matrix index -> affine (12 floats) or null */
+    /** SkinningData -> per key (clothes 0..KEYS-1, a blended body KEYS..): matrix index -> affine (12 floats) or null */
     private static final Map<Object, float[][][]> perMesh = Collections.synchronizedMap(new WeakHashMap<>());
     /** the transforms array of a mesh -> the matrices last written into it (arrays have identity equality) */
     private static final Map<Object, float[][]> written = Collections.synchronizedMap(new WeakHashMap<>());
@@ -65,7 +72,9 @@ final class Fit {
         if (z == null) return;
         Object body = fModelMesh.get(z[0]);
         Object bodyData = body == null ? null : fMeshSkinning.get(body);
-        if (bodyData == data) {                                // the body itself already has the shape
+        int key = (Integer) z[1];
+        boolean isBody = bodyData == data;
+        if (isBody && key % Q == 0) {                          // the body itself already has the shape
             if (!bodySeen) {
                 bodySeen = true;
                 RBSHook.log("clothes: body mesh recognised - only the meshes on top of it are reshaped");
@@ -73,16 +82,16 @@ final class Fit {
             return;
         }
         if (bodyData == null) return;                          // body still loading: cannot tell it from clothes yet
-        int key = (Integer) z[1];
         if (!ensureLayout(t)) return;
         PlayerFit.refresh();                                   // the mod's skip list and the models it has data for
         String path = MeshInfo.path(player, data);
-        if (PlayerFit.skipped(path) || PlayerFit.skipped(plain(path))) return;
+        if (!isBody && (PlayerFit.skipped(path) || PlayerFit.skipped(plain(path)))) return;
+        int slot = isBody ? BODY + key : key;                  // a blended body: moved from the variant below
         float[][] maps;
         try {
-            maps = mapsFor(player, data, key, path);
+            maps = mapsFor(player, data, slot, path);
         } catch (Throwable e) {
-            leave(data, key);                                  // this piece stays as the game made it, the others go on
+            leave(data, slot);                                 // this piece stays as the game made it, the others go on
             if (pieceErrors++ < 10) RBSHook.warn("clothes: " + path + ": " + e + " - left as it is");
             return;
         }
@@ -91,13 +100,13 @@ final class Fit {
     }
 
     /** a piece whose maps could not be worked out: never tried again for this body */
-    private static void leave(Object data, int key) {
+    private static void leave(Object data, int slot) {
         float[][][] all = perMesh.get(data);
         if (all == null) {
-            all = new float[8][][];
+            all = new float[2 * KEYS][][];
             perMesh.put(data, all);
         }
-        all[key] = new float[0][];
+        all[slot] = new float[0][];
     }
 
     /** the skin matrix layout, found from this transforms array if not known yet (MeshSpace needs it before any map) */
@@ -146,9 +155,9 @@ final class Fit {
             if (e != null && now < (Long) e[2]) return e[0] == NONE ? null : e;
             Object[] r = null;
             if (RBSHook.isLiveZombie(chr)) {
-                if (RBSHook.zombiesEnabled() && RBSHook.wearsVariant(chr)) r = describe(RBSHook.visualOf(chr));
+                if (RBSHook.zombiesEnabled() && RBSHook.wearsVariant(chr)) r = describeLive(chr);
             } else if (Others.wearsVariant(chr)) {
-                r = describe(Others.isFemale(chr), Others.variant(chr), "player");
+                r = describe(Others.isFemale(chr), Others.variant(chr), 0, null, "player");
             }
             byChar.put(chr, r == null ? new Object[]{ NONE, 0, now + 2_000_000_000L } : new Object[]{ r[0], r[1], now + 2_000_000_000L });
             return r;
@@ -158,25 +167,38 @@ final class Fit {
         if (visual == null) return null;
         if (!RBSHook.isZombieVisual(visual)) {
             Object[] p = NpcHeads.previewOf(visual);            // a UI preview of another mod's NPC: its body's fit
-            return p == null ? null : describe((Boolean) p[0], (Integer) p[1], "NPC preview");
+            return p == null ? null : describe((Boolean) p[0], (Integer) p[1], 0, null, "NPC preview");
         }
         if (!RBSHook.wearsVariant(visual)) return null;
         return describe(visual);
     }
 
+    /** a corpse's (or a copy's): the variant it keeps */
     private static Object[] describe(Object visual) throws Exception {
         if (visual == null) return null;
-        return describe(RBSHook.isFemaleVisual(visual), RBSHook.variantOf(visual), "zombie");
+        return describe(RBSHook.isFemaleVisual(visual), RBSHook.variantOf(visual), 0, null, "zombie");
     }
 
-    private static Object[] describe(boolean female, int v, String who) throws Exception {
-        if (v == 1) return null;                              // Normal: vanilla clothes fit already
-        Object model = RBSHook.variantModelOf(female, v);
+    /** a live zombie: its variant, and the step toward the next one when it is an NPC set so (its body then needs a map
+     *  too: the model it really wears is looked up - another mod's NPC may wear the HD add-on's) */
+    private static Object[] describeLive(Object chr) throws Exception {
+        Object visual = RBSHook.visualOf(chr);
+        if (visual == null) return null;
+        boolean female = RBSHook.isFemaleVisual(visual);
+        int v = RBSHook.variantOf(visual);
+        int q = v < RBSHook.NAMES.length - 1 ? RBSHook.blendStep(visual) : 0;
+        return describe(female, v, q, q > 0 ? RBSHook.zombieVariantModel(chr, female, v) : null, q > 0 ? "NPC" : "zombie");
+    }
+
+    private static Object[] describe(boolean female, int v, int q, Object worn, String who) throws Exception {
+        if (v == 1 && q == 0) return null;                    // Normal: vanilla clothes fit already
+        Object model = worn != null ? worn : RBSHook.variantModelOf(female, v);
         if (model == null) return null;                       // Zombie Bodies mod off: the game's body
-        int key = (female ? 0 : 4) + v;
+        int key = (female ? 0 : 4 * Q) + v * Q + q;
         if (diag < 8) {
             diag++;
-            RBSHook.log("clothes: " + (female ? "female " : "male ") + RBSHook.NAMES[v] + " " + who + " - its clothes follow the body");
+            RBSHook.log("clothes: " + (female ? "female " : "male ") + RBSHook.NAMES[v] + (q > 0 ? " " + q + "/" + Q + " of the way to " + RBSHook.NAMES[v + 1] : "")
+                    + " " + who + " - its clothes follow the body" + (q > 0 ? ", and the body is moved that far" : ""));
         }
         return new Object[]{ model, key };
     }
@@ -189,19 +211,24 @@ final class Fit {
         return path != null && path.startsWith("rbsclean/") ? path.substring(9) : path;
     }
 
-    private static float[][] mapsFor(Object player, Object data, int key, String path) throws Exception {
+    private static float[][] mapsFor(Object player, Object data, int slot, String path) throws Exception {
         float[][][] all = perMesh.get(data);
         if (all == null) {
-            all = new float[8][][];
+            all = new float[2 * KEYS][][];
             perMesh.put(data, all);
         }
-        float[][] m = all[key];
+        float[][] m = all[slot];
         if (m != null) return m.length == 0 ? null : m;
-        float[][][] table = FitTable.MAPS[key / 4];
-        float[][] byBone = table == null ? null : table[key % 4];
+        boolean body = slot >= BODY;
+        int key = slot % KEYS;
+        float[][][] table = FitTable.MAPS[key / (4 * Q)];
+        int v = key % (4 * Q) / Q, q = key % Q;
+        float[][] byBone = table == null || v >= table.length ? null
+                : q == 0 ? (body ? null : table[v])
+                : blend(table[v], v + 1 < table.length ? table[v + 1] : null, q / (float) Q, body);
         Map<String, Integer> names = (Map<String, Integer>) fBoneIndices.get(data);
         if (byBone == null || names == null) {
-            all[key] = new float[0][];
+            all[slot] = new float[0][];
             return null;
         }
         Map<String, float[]> byName = new HashMap<>();
@@ -225,16 +252,78 @@ final class Fit {
             }
         }
         if (!any) {
-            all[key] = new float[0][];
+            all[slot] = new float[0][];
             return null;
         }
         // a mod's mesh in a space of its own (FBX scaled x100...); the size guard only for pieces without the mod's data
-        // (some of the game's pads have boxes reaching far off the body and always fitted fine)
-        boolean ours = path == null || PlayerFit.known(plain(path));
-        m = MeshSpace.convert(player, data, m, "clothes: " + path, ours ? null : MeshInfo.box(player, data));
+        // (some of the game's pads have boxes reaching far off the body and always fitted fine; never the body itself)
+        boolean ours = body || path == null || PlayerFit.known(plain(path));
+        m = MeshSpace.convert(player, data, m, (body ? "blended body: " : "clothes: ") + path, ours ? null : MeshInfo.box(player, data));
         if (m == null) return null;                              // not yet: try again next time
-        all[key] = m;
+        all[slot] = m;
         return m.length == 0 ? null : m;
+    }
+
+    /**
+     * The maps of the body the share t of the way from one variant to the next (per bone, bind space): each affine mixed
+     * (1-t)*lo + t*hi - for clothes made for the Normal body; for the body of the variant below (body) that mix after
+     * the inverse of its own map, which takes the variant below to the blended one. A missing map is the identity (the
+     * Normal body's own); a mix equal to it stays missing (nothing to move).
+     */
+    static float[][] blend(float[][] lo, float[][] hi, float t, boolean body) {
+        int n = Math.max(lo == null ? 0 : lo.length, hi == null ? 0 : hi.length);
+        float[][] out = new float[n][];
+        boolean any = false;
+        for (int i = 0; i < n; i++) {
+            float[] a = lo != null && i < lo.length && lo[i] != null ? lo[i] : IDENTITY;
+            float[] b = hi != null && i < hi.length && hi[i] != null ? hi[i] : IDENTITY;
+            float[] h = new float[12];
+            for (int k = 0; k < 12; k++) h[k] = (1 - t) * a[k] + t * b[k];
+            if (body) {
+                float[] inv = inverse(a);
+                if (inv == null) continue;
+                h = then(inv, h);
+            }
+            if (isIdentity(h)) continue;
+            out[i] = h;
+            any = true;
+        }
+        return any ? out : null;
+    }
+
+    private static final float[] IDENTITY = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 };
+
+    /** an affine (rows of 3x3 | translation) inverted, or null when it cannot be */
+    static float[] inverse(float[] a) {
+        float a00 = a[0], a01 = a[1], a02 = a[2], a10 = a[4], a11 = a[5], a12 = a[6], a20 = a[8], a21 = a[9], a22 = a[10];
+        float c00 = a11 * a22 - a12 * a21, c01 = a02 * a21 - a01 * a22, c02 = a01 * a12 - a02 * a11;
+        float c10 = a12 * a20 - a10 * a22, c11 = a00 * a22 - a02 * a20, c12 = a02 * a10 - a00 * a12;
+        float c20 = a10 * a21 - a11 * a20, c21 = a01 * a20 - a00 * a21, c22 = a00 * a11 - a01 * a10;
+        float det = a00 * c00 + a01 * c10 + a02 * c20;
+        if (!(Math.abs(det) > 1e-8f)) return null;
+        float d = 1f / det;
+        float[] r = { c00 * d, c01 * d, c02 * d, 0, c10 * d, c11 * d, c12 * d, 0, c20 * d, c21 * d, c22 * d, 0 };
+        for (int row = 0; row < 3; row++) {
+            r[row * 4 + 3] = -(r[row * 4] * a[3] + r[row * 4 + 1] * a[7] + r[row * 4 + 2] * a[11]);
+        }
+        return r;
+    }
+
+    /** first p, then q: (q after p)(x) = q(p(x)) */
+    static float[] then(float[] p, float[] q) {
+        float[] r = new float[12];
+        for (int row = 0; row < 3; row++) {
+            for (int c = 0; c < 3; c++) {
+                r[row * 4 + c] = q[row * 4] * p[c] + q[row * 4 + 1] * p[4 + c] + q[row * 4 + 2] * p[8 + c];
+            }
+            r[row * 4 + 3] = q[row * 4] * p[3] + q[row * 4 + 1] * p[7] + q[row * 4 + 2] * p[11] + q[row * 4 + 3];
+        }
+        return r;
+    }
+
+    private static boolean isIdentity(float[] h) {
+        for (int k = 0; k < 12; k++) if (Math.abs(h[k] - IDENTITY[k]) > 1e-6f) return false;
+        return true;
     }
 
     // ---------------- matrices ----------------
