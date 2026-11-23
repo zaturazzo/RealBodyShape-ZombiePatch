@@ -129,11 +129,125 @@ public final class RBSHook {
             warn("zombie body failed: " + t);
         }
         if (m != null) {
+            m = whileLoading(chr, m);
             Jiggle.bodyModel(m);
             return m;
         }
         Jiggle.playerBody(chr, body);
         return body;
+    }
+
+    // ---------------- a new body only once it has loaded ----------------
+    // 2026-11-23: with Project Viewpoint on, leaving first person threw "player.boneTransforms is null" in its hand-back.
+    // Asked for a character's AnimationPlayer, the game releases it and takes one from the pool again when the body
+    // model changed (IsoGameCharacter.getAnimationPlayer) - the same object comes back, with no bones until the new model
+    // has loaded. Our bodies can change after the first sight (another mod's NPC: a body from its looks, then one from its
+    // weight a frame later), and an HD / variant body loads on its first use, so for a few frames the character had no
+    // bones: Viewpoint, holding it, wrote its pose into them on the way out. So while the new body is still loading and
+    // the one in use is ready, the character keeps the one in use (HOLD_NS at most - a body that never loads goes the
+    // game's way); once the new one is in, the model is rebuilt with it, and the AnimationPlayer gets its bones at once.
+    private static final long HOLD_NS = 2_000_000_000L;
+    private static final Object[] holdChr = new Object[64];   // characters kept on their body, by identity
+    private static final long[] holdSince = new long[64];
+    private static volatile int holds;                         // entries in use (a quick "none" on the common path)
+    private static Field fAnimPlayer;
+    private static Method apModel, assetReady, resetNext;
+    private static boolean holdFailed;
+    private static int heldTotal, heldLogs, timedOut;
+    private static long heldLongest;
+
+    private static Object whileLoading(Object chr, Object m) {
+        if (holdFailed || chr == null) return m;
+        try {
+            if (fAnimPlayer == null) {
+                Field f = null;
+                for (Class<?> c = chr.getClass(); c != null && f == null; c = c.getSuperclass()) {
+                    try {
+                        f = c.getDeclaredField("animPlayer");
+                    } catch (NoSuchFieldException e) {
+                        // up the hierarchy
+                    }
+                }
+                if (f == null) throw new NoSuchFieldException("IsoGameCharacter.animPlayer");
+                f.setAccessible(true);
+                apModel = f.getType().getMethod("getModel");
+                assetReady = m.getClass().getMethod("isReady");
+                resetNext = f.getDeclaringClass().getMethod("resetModelNextFrame");   // IsoGameCharacter's: any kind
+                fAnimPlayer = f;
+            }
+            Object ap = fAnimPlayer.get(chr);
+            Object cur = ap == null ? null : apModel.invoke(ap);
+            if (cur == m || cur == null) {
+                if (holds > 0) unhold(chr);                    // swapped some other way (or no player yet)
+                return m;
+            }
+            if ((Boolean) assetReady.invoke(m)) {
+                long since = unhold(chr);
+                if (since != NOT_HELD && since != GAVE_UP) {   // it was kept on the old body: build it with the new
+                    resetNext.invoke(chr);
+                    long ms = (System.nanoTime() - since) / 1_000_000L;
+                    if (ms > heldLongest) heldLongest = ms;
+                    if (heldLogs < 3) {
+                        heldLogs++;
+                        log("zombie body: the new body has loaded after " + ms + " ms - the model is rebuilt with it ("
+                                + heldTotal + " kept so far, longest " + heldLongest + " ms, " + timedOut
+                                + " not loaded in time)");
+                    }
+                }
+                return m;
+            }
+            if (!(Boolean) assetReady.invoke(cur)) return m;   // nothing ready to keep: the game's way
+            long now = System.nanoTime();
+            long since = held(chr, now);
+            if (since == GAVE_UP) return m;                    // waited once already: until the swap is done
+            if (now - since <= HOLD_NS) return cur;
+            giveUp(chr);
+            if (timedOut++ < 3) log("zombie body: a new body did not load in " + HOLD_NS / 1_000_000L
+                    + " ms - the character takes it as it is");
+            return m;
+        } catch (Throwable t) {
+            holdFailed = true;
+            warn("zombie body: keeping a body while the new one loads failed, bodies change at once (" + t + ")");
+            return m;
+        }
+    }
+
+    private static final long NOT_HELD = Long.MIN_VALUE, GAVE_UP = Long.MIN_VALUE + 1;
+
+    /** when this character was first kept on its body (now if new), or GAVE_UP */
+    private static synchronized long held(Object chr, long now) {
+        int free = -1, oldest = -1;
+        for (int i = 0; i < holdChr.length; i++) {
+            if (holdChr[i] == chr) return holdSince[i];
+            if (holdChr[i] == null) {
+                if (free < 0) free = i;
+            } else if (oldest < 0 || holdSince[i] - holdSince[oldest] < 0) oldest = i;
+        }
+        int i = free >= 0 ? free : oldest;                     // full: the oldest entry makes room
+        if (holdChr[i] == null) holds++;
+        holdChr[i] = chr;
+        holdSince[i] = now;
+        heldTotal++;
+        return now;
+    }
+
+    /** this character waited its time: no more keeping until its swap is done (then unhold) */
+    private static synchronized void giveUp(Object chr) {
+        for (int i = 0; i < holdChr.length; i++) {
+            if (holdChr[i] == chr) holdSince[i] = GAVE_UP;
+        }
+    }
+
+    /** forget a kept character; when it was first kept, NOT_HELD if it was not (GAVE_UP if it waited its time) */
+    private static synchronized long unhold(Object chr) {
+        for (int i = 0; i < holdChr.length; i++) {
+            if (holdChr[i] == chr) {
+                holdChr[i] = null;
+                holds--;
+                return holdSince[i];
+            }
+        }
+        return NOT_HELD;
     }
 
     // ---------------- HumanVisual.getModel() ----------------
