@@ -500,9 +500,13 @@ public final class RBSHook {
     // a model file reloaded during play keeps its SkinningData when the skeleton is the same, so the character's
     // animations are not all dropped and restarted (see KeepSkeleton)
     public static void meshLoadedX(Object mesh, Object scene) {
-        if (!zbActive()) beforeMeshLoadedX(mesh);
-        call(origLoadedX(mesh), mesh, scene);
-        if (!zbActive()) afterMeshLoadedX(mesh);
+        boolean ours = !zbActive();
+        if (ours) beforeMeshLoadedX(mesh);
+        try {
+            call(origLoadedX(mesh), mesh, scene);
+        } finally {
+            if (ours) afterMeshLoadedX(mesh);       // also when the game's load threw: its stand-in comes off the mesh
+        }
     }
 
     public static void beforeMeshLoadedX(Object mesh) {

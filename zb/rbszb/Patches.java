@@ -122,7 +122,8 @@ public final class Patches {
             RBSHook.beforeMeshLoadedX(mesh);
         }
 
-        @Patch.OnExit
+        // also when the game's load threw: its stand-in SkinningData comes off the mesh (KeepSkeleton)
+        @Patch.OnExit(onThrowable = Throwable.class)
         public static void exit(@Patch.This Object mesh) {
             RBSHook.afterMeshLoadedX(mesh);
         }
