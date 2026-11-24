@@ -1,9 +1,17 @@
-# Real Body Shape – patch v6.9 (Project Zomboid Build 42, Windows)
+# Real Body Shape – patch v6.11 (Project Zomboid Build 42, Windows)
 
-Unofficial companion for the Steam Workshop item **Real Body Shape** (id 3830730496, version 0.3.4 or newer; 0.3.6 for stiff bags and armour; 0.3.9 for the hair and the Sandbox options; 0.3.10 for Room in clothes and cut limbs), which
+Unofficial companion for the Steam Workshop item **Real Body Shape** (id 3830730496, version 0.3.4 or newer; 0.3.6 for stiff bags and armour; 0.3.9 for the hair and the Sandbox options; 0.3.10 for Room in clothes and cut limbs; 0.4.0 for the arms of a heavy body and the new bodies), which
 contains *Real Body Shape*, *Real Body Shape - Zombie Bodies*, *Real Body Shape - Zombie Dismemberment*,
 *Real Body Shape - zombie patch through ZombieBuddy* and a few more optional mods.
-- New in v6.9 (with Real Body Shape 0.3.10): Room in clothes - in Options > Mods > Real Body Shape, give clothes
+**Install once (new in v6.11):** you no longer need a new zip when Real Body Shape updates. The patch's code now
+comes inside the Real Body Shape Workshop item, which Steam keeps up to date; see Quick install below.
+
+- New in v6.11 (with Real Body Shape 0.4.0): a heavy character's arms hang out from the body by the pose instead of
+  sinking into the waist and the clothes; other mods' clothes follow the new body shapes; companions from NPC mods
+  get 14 body sizes by weight; room for a single piece goes from -3 to +5 cm; a character keeps its shape until the
+  new one is ready. Fixed: after making a man, the first world load could hang on the loading screen (with some
+  ragdoll mods).
+- v6.9 (with Real Body Shape 0.3.10): Room in clothes - in Options > Mods > Real Body Shape, give clothes
   more room over any part where skin shows through (per body; tops over trousers or a skirt stay over them, the
   canteen moves as a whole); companions from NPC mods keep their body and height; with Zombie Dismemberment a hit can
   take off a zombie's limb (single player); belts, holsters, pouches and straps from other mods sit closer.
@@ -47,7 +55,7 @@ Full manual, troubleshooting and source code: https://github.com/zaturazzo/RealB
    and uses it from the next start. Without the Workshop item (unsubscribed, still downloading), the copy kept in
    the folder is used, so the game always starts.
 3. Start the game, enable *Real Body Shape* and *Real Body Shape - Zombie Bodies* (plus *Zombie Dismemberment* if you
-   want), load your save. `%USERPROFILE%\Zomboid\console.txt` should contain `[RBS hook] ready (classpath) v6.9 ...` and
+   want), load your save. `%USERPROFILE%\Zomboid\console.txt` should contain `[RBS hook] ready (classpath) v6.11 ...` and
    `[RealBodyShape] zombie bodies: patch active (classpath), Zombie Bodies mod on`.
 
 - `status.bat` – what is installed, and whether the patch still matches the game version.

@@ -50,6 +50,21 @@ this patch adds them:
   while the player does something and glances at a companion when no zombie is in sight; the Hair Sway hairstyles
   show in the character creation and info previews; on Tomb's Player Body, other mods' clothes grow the way Tomb's
   body does.
+- **Install once (v6.11):** the patch's code now ships inside the Real Body Shape Workshop item
+  (`RealBodyShape/42/media/java/rbs_core.jar`), and `install.bat` lists it on the game's classpath together with a
+  folder of the game's patched classes (`%USERPROFILE%\Zomboid\RealBodyShape\patch`, made from the player's own
+  `projectzomboid.jar`). A Real Body Shape update brings the new code with the item; when it needs different changes
+  to the game's classes, the patch remakes the folder in the background as the game starts and uses it from the next
+  start. Without the item, the copy of the code kept in the folder runs. `install.bat` is needed again only after a
+  game update (Steam rewrites `ProjectZomboid64.json`).
+- **Arms of a heavy body (v6.11, mod 0.4.0+):** each frame, the elbow, forearm, wrist and hand are compared with the
+  trunk's outline at the character's weight, and the upper arm turns out about the shoulder by what is missing, plus
+  the clothes under the arm. No turn when both hands are together or rest on the trunk's front or back (folded arms, a
+  hand on the belly). What a hand holds turns with it.
+- **Also in v6.11:** other mods' clothes follow the mod's new body shapes (per sex: the female model counts as a
+  lighter woman); NPC companions get 14 body sizes from the 4 zombie bodies; room for one piece -3 .. +5 cm; a
+  character keeps its old body until the new file has loaded; a reloaded body no longer empties the skeleton the
+  animations share (the first world load after making a man could hang with some ragdoll mods).
 
 > **Using ZombieBuddy?** You do not need this download. The Workshop item contains the same patch as a ZombieBuddy
 > Java mod: enable **Real Body Shape - zombie patch through ZombieBuddy** in the mod list and you are done
