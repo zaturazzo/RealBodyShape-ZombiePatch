@@ -35,18 +35,25 @@ Full manual, troubleshooting and source code: https://github.com/zaturazzo/RealB
 
 ## Quick install
 1. Subscribe to **Real Body Shape** on the Workshop; it brings all its mods.
-2. **Close the game.** Run `install.bat` – it builds `rbs_patch.jar` from **your** `projectzomboid.jar` using the game's own
-   Java runtime (no Java installation needed) and adds one entry to `<game>\ProjectZomboid64.json`
-   (backup: `ProjectZomboid64.json.rbs_backup`). If the game folder is not found:
-   `install.bat "D:\path\to\steamapps\common\ProjectZomboid"`. Updating from an older version: just run it, it
-   replaces the old entry.
+2. **Close the game.** Run `install.bat` – it patches the game classes from **your** `projectzomboid.jar` into the
+   folder `%USERPROFILE%\Zomboid\RealBodyShape\patch`, using the game's own Java runtime (no Java installation
+   needed), and adds two entries to `<game>\ProjectZomboid64.json` (backup: `ProjectZomboid64.json.rbs_backup`):
+   the patch's code inside the Real Body Shape Workshop item (`rbs_core.jar`) and that folder. If the game folder is
+   not found: `install.bat "D:\path\to\steamapps\common\ProjectZomboid"`. Updating from an older version: just run
+   it, it replaces the old entry.
+
+   **This download is needed once.** New versions of the patch come with the Workshop item, which Steam keeps up
+   to date. When a new version changes more of the game, the patch remakes its folder by itself as the game starts
+   and uses it from the next start. Without the Workshop item (unsubscribed, still downloading), the copy kept in
+   the folder is used, so the game always starts.
 3. Start the game, enable *Real Body Shape* and *Real Body Shape - Zombie Bodies* (plus *Zombie Dismemberment* if you
    want), load your save. `%USERPROFILE%\Zomboid\console.txt` should contain `[RBS hook] ready (classpath) v6.9 ...` and
    `[RealBodyShape] zombie bodies: patch active (classpath), Zombie Bodies mod on`.
 
 - `status.bat` – what is installed, and whether the patch still matches the game version.
 - `uninstall.bat` – removes the patch again (the game starts exactly as before).
-- After a game update, run `install.bat` again. If the game closes right at the start, install the newest patch (v6.6 or later is needed for game 42.22.2), or delete the folder `Zomboid\RealBodyShape` in your user folder to play without the patch.
+- After a game update, run `install.bat` again (the same files, no new download: Steam rewrites
+  `ProjectZomboid64.json` when the game updates, which removes the entries). If the game closes right at the start, install the newest patch (v6.6 or later is needed for game 42.22.2), or delete the folder `Zomboid\RealBodyShape` in your user folder to play without the patch.
 - Settings: the zombie mix (by sex and line of work), zombie heights and limb rates are Sandbox options of
   Zombie Bodies and Zombie Dismemberment (Real Body Shape 0.3.9+); body style and muscle are in Options > Mods >
   Real Body Shape. `JIGGLE` and `LOOK` are still in the mod's `RealBodyShape.lua`.
@@ -54,4 +61,5 @@ Full manual, troubleshooting and source code: https://github.com/zaturazzo/RealB
 ## (TH) ติดตั้งแบบย่อ
 Subscribe Real Body Shape (0.3.4+) → ปิดเกม → รัน `install.bat` → เปิดเกม เปิด mod Real Body Shape + Zombie Bodies (และ Zombie Dismemberment ถ้าต้องการ) → โหลดเซฟ
 ใช้ ZombieBuddy อยู่แล้วไม่ต้องใช้ zip นี้ เปิด mod "zombie patch through ZombieBuddy" แทน
+โหลด zip นี้ครั้งเดียวพอ: แพตช์รุ่นใหม่มากับ item บน Workshop (Steam อัปเดตให้เอง) ถ้าไม่มี item ก็ใช้สำเนาในโฟลเดอร์ `Zomboid\RealBodyShape\patch` เกมเปิดได้เสมอ
 ถอดด้วย `uninstall.bat`, ดูสถานะด้วย `status.bat`, เกมอัปเดตแล้วรัน `install.bat` ซ้ำ ไม่ต้องลง Java เพิ่ม คู่มือละเอียดอยู่ในหน้า GitHub

@@ -312,6 +312,7 @@ public final class RBSHook {
             } catch (Throwable e) {
                 warn("zombie height failed: " + why(e));
             }
+            ArmSpread.apply(player);                           // hanging arms out from a heavier body
             HeadLook.update(player);
             GripIK.update(player);                             // the left hand back on a two-handed weapon
             Jiggle.update(player);
@@ -379,6 +380,7 @@ public final class RBSHook {
             } catch (Throwable e) {
                 warn("zombie height (turn) failed: " + why(e));
             }
+            ArmSpread.apply(player);
             HeadLook.reapply(player);
             GripIK.reapply(player);
         } finally {
@@ -1317,6 +1319,7 @@ public final class RBSHook {
             String note = checkSource(cl);
             log("ready (" + mode + ") v" + RBSAgent.VERSION + " - zombies and corpses use RBS_Zombie*_{Thin,Normal,Fat,Obese} model scripts; " + note);
             Marker.write(true, mode, note);
+            PatchUpdate.checkLater();                          // the classpath copy: its patch folder kept up with us
         } catch (Throwable t) {
             failed = true;
             warn("init failed, zombies keep the shared body: " + t);

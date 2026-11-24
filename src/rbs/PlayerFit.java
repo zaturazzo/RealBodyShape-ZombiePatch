@@ -57,6 +57,22 @@ final class PlayerFit {
     /** models never fitted, roughly or (zombies) by Fit: RealBodyShape.ROUGH.skip, a whole path or its last parts */
     private static volatile Set<String> skip = Collections.emptySet();
     private static volatile float[] params = new float[PlayerFitTable.KEYS.length];
+    /** the shape's amount (the mod's stamp), also when the water body takes fat / thin out of params */
+    private static volatile float amount;
+
+    static float amountNow() {
+        return amount;
+    }
+
+    /** the current values of some shape keys (PlayerFitTable.KEYS names; 0 for one it has not) */
+    static float[] values(String[] keys) {
+        float[] p = params, out = new float[keys.length];
+        for (int i = 0; i < keys.length; i++) {
+            int j = indexOf(PlayerFitTable.KEYS, keys[i]);
+            out[i] = j >= 0 && j < p.length ? p[j] : 0f;
+        }
+        return out;
+    }
     /**
      * Room in clothes (2026-11-20, Options > Mods > Real Body Shape): cm over each part (Allowance.REGIONS), the set of
      * the body worn as the mod writes it: allow= numbers. Every piece the player wears takes it - the ones the mod has
@@ -104,6 +120,18 @@ final class PlayerFit {
      */
     private static volatile float[] gearCm = null;
     private static volatile Set<String> gear = Collections.emptySet();
+    /** armroom= (cm): the clothes under a hanging arm, for ArmSpread (RealBodyShapeStyle.lua armRoom); 0 without */
+    private static volatile float armRoomCm;
+
+    static float armRoomNow() {
+        return armRoomCm;
+    }
+
+    /** Tomb's body worn (its table given: tomb= rows) */
+    static boolean tombNow() {
+        float[][][][] t = tomb;
+        return t != null && (t[0] != null || t[1] != null);
+    }
 
     /** this piece keeps its fit: made for the body worn */
     private static boolean madeForBody(String path, int sex) {
@@ -508,6 +536,64 @@ final class PlayerFit {
         return any;
     }
 
+    /**
+     * The water body (the mod's stamp says water=1, 2026-11-24): its weight knots (w1..) and its belly after eating
+     * (m1.., times the meal) instead of fat / thin / belly - the shares of the two knots round the amount, as
+     * RealBodyShape.knotShares does (the knots leave out amount 0: none there; below the lowest the move goes on in
+     * line through 0, above the highest it stays).
+     */
+    static void water(float[] p, float amount, float meal) {
+        for (int i = 0; i < p.length; i++) {
+            String key = PlayerFitTable.KEYS[i];
+            if (key.equals("fat") || key.equals("thin") || key.equals("belly")) p[i] = 0f;
+        }
+        float[] knots = PlayerFitTable.KNOTS.length > 0 ? PlayerFitTable.KNOTS[0] : new float[0];
+        float[] meals = PlayerFitTable.MEALS.length > 0 ? PlayerFitTable.MEALS[0] : new float[0];
+        put(p, "w", knotShares(knots, amount, true), 1f);
+        if (meal != 0f) put(p, "m", knotShares(meals, amount, false), meal);
+    }
+
+    private static void put(float[] p, String pre, float[] shares, float scale) {
+        for (int k = 0; k < shares.length; k++) {
+            if (shares[k] == 0f) continue;
+            int i = indexOf(PlayerFitTable.KEYS, pre + (k + 1));
+            if (i >= 0 && i < p.length) p[i] += shares[k] * scale;
+        }
+    }
+
+    /** share of each knot (index k = array k + 1) for an amount; zero: the point at amount 0 (no array) is between */
+    static float[] knotShares(float[] knots, float a, boolean zero) {
+        int n = knots.length;
+        float[] out = new float[n];
+        if (n == 0) return out;
+        float[] xs = new float[n + (zero ? 1 : 0)];
+        int[] id = new int[xs.length];
+        for (int i = 0; i < n; i++) { xs[i] = knots[i]; id[i] = i; }
+        if (zero) { xs[n] = 0f; id[n] = -1; }
+        for (int i = 1; i < xs.length; i++) {                   // sort by amount (few points)
+            for (int j = i; j > 0 && xs[j - 1] > xs[j]; j--) {
+                float t = xs[j]; xs[j] = xs[j - 1]; xs[j - 1] = t;
+                int u = id[j]; id[j] = id[j - 1]; id[j - 1] = u;
+            }
+        }
+        int last = xs.length - 1;
+        if (a <= xs[0]) {
+            if (id[0] >= 0) out[id[0]] = (zero && xs[0] < 0f) ? a / xs[0] : 1f;
+        } else if (a >= xs[last]) {
+            if (id[last] >= 0) out[id[last]] = 1f;
+        } else {
+            for (int i = 0; i < last; i++) {
+                if (a <= xs[i + 1]) {
+                    float t = (a - xs[i]) / (xs[i + 1] - xs[i]);
+                    if (id[i] >= 0) out[id[i]] += 1f - t;
+                    if (id[i + 1] >= 0) out[id[i + 1]] += t;
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+
     /** the HD add-on's inner thigh fill: none below the first amount, all from the last, straight lines between */
     static float fillGain(float amount) {
         return gain(PlayerFitTableHD.FILL_GAIN, amount);
@@ -634,6 +720,7 @@ final class PlayerFit {
                 Map<String, float[]> an = new HashMap<>(), pc = new HashMap<>();
                 Set<String> ge = new HashSet<>();
                 float[] gr = null;
+                float ar = 0f;
                 int tRows = 0, tBad = 0;
                 if (cm > 0 && cm + 5000 >= liveSince) {           // written in this session: the mod is on
                     for (String line : Files.readAllLines(cfg, StandardCharsets.UTF_8)) {
@@ -658,8 +745,17 @@ final class PlayerFit {
                         else if (key.equals("piece")) pieceRow(v, pc);
                         else if (key.equals("gearroom")) gr = gearValues(v);
                         else if (key.equals("gear") && !v.isEmpty()) ge.add(MeshInfo.norm(v));
+                        else if (key.equals("armroom")) {
+                            try {
+                                ar = Math.max(0f, Math.min(10f, Float.parseFloat(v)));
+                            } catch (NumberFormatException ignored) {
+                                // left at none
+                            }
+                        }
                     }
                 }
+                if (ar != armRoomCm) RBSHook.log(String.format(Locale.ROOT, "arm spread: the clothes under the arms take %.1f cm", ar));
+                armRoomCm = ar;
                 anchors = an;
                 allowCm = al;
                 overCm = ao;
@@ -725,6 +821,8 @@ final class PlayerFit {
                     else if (key.equals("thin")) p[i] = Math.max(-amount, 0f);
                     else p[i] = v.getOrDefault(key, 0f);
                 }
+                amount = v.getOrDefault("amount", 0f);
+                if (v.getOrDefault("water", 0f) > 0.5f) water(p, v.getOrDefault("amount", 0f), v.getOrDefault("meal", 0f));
                 if (on) RBSHook.log(String.format(Locale.ROOT, "rough fit: shape %.1f kg (amount %.4f, belly %.4f, chest %.4f, arms %.4f, legs %.4f, bust %.4f, hips %.4f, waist %.4f)",
                         v.getOrDefault("weight", 0f), v.getOrDefault("amount", 0f), p[2], p[3], p[4], p[5], p[6], p[7], p[8]));
             }

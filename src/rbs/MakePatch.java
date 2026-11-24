@@ -31,8 +31,14 @@ import java.util.zip.ZipOutputStream;
  *   java -cp "rbs_agent.jar;<game>/projectzomboid.jar" rbs.MakePatch install|uninstall|status <game dir>
  *
  * install  : patches the game classes in RBSAgent.SPECS from the user's own projectzomboid.jar (never redistributed),
- *            verifies them with the JVM, writes ~/Zomboid/RealBodyShape/rbs_patch.jar and lists that jar first in
- *            the "classpath" of <game>/ProjectZomboid64.json (backup: ProjectZomboid64.json.rbs_backup).
+ *            verifies them with the JVM, writes them to the folder ~/Zomboid/RealBodyShape/patch and lists first in
+ *            the "classpath" of <game>/ProjectZomboid64.json (backup: ProjectZomboid64.json.rbs_backup):
+ *              1. rbs_core.jar inside the Real Body Shape Workshop item (our code: Steam keeps it up to date, so a new
+ *                 version of the mod needs no new download here - 2026-11-24, "load github once")
+ *              2. the patch folder: the patched game classes, the rest of their packages, and a copy of our code
+ *                 from install time that is used when the Workshop item is not there (unsubscribed, not downloaded)
+ *            A folder, not a jar: a newer rbs_core.jar that patches more of the game rebuilds it itself (PatchUpdate;
+ *            Windows locks a jar the game has open, not a folder's files) - in use from the next start.
  * uninstall: removes the jar from the launcher config again (the game is back to normal).
  * status   : shows what is installed and whether the patch still matches the game version.
  * Nothing inside the game folder is modified except that one launcher config line.
@@ -44,6 +50,9 @@ public final class MakePatch {
     public static void main(String[] a) throws Exception {
         String cmd = a.length > 0 ? a[0].toLowerCase() : "status";
         Path game = a.length > 1 ? Paths.get(a[1]) : findGame();
+        // (the zip unpacked inside the game folder: rbs.bat passes "<game>\<zip folder>\.." - the Workshop's library is
+        // found from the real folder)
+        if (game != null) game = game.toAbsolutePath().normalize();
         if (game == null || !Files.exists(game.resolve("projectzomboid.jar"))) {
             System.out.println("ERROR: Project Zomboid folder not found (projectzomboid.jar). Pass it as the 2nd argument.");
             System.exit(2);
@@ -71,6 +80,35 @@ public final class MakePatch {
     // ------------------------------------------------------------------ install
     static void install(Path game, Path installDir, Path jar, Path launcher) throws Exception {
         Path gameJar = game.resolve("projectzomboid.jar");
+        Path dir = installDir.resolve(PATCH_DIR);
+        buildPatchDir(gameJar, dir, ownClasses(), true);
+        Path core = findCoreJar(game);
+        System.out.println("our code : " + (core != null ? core + " (the Workshop item: updated by Steam)"
+                : "not found in the Workshop item - the copy in the patch folder is used (subscribe to Real Body Shape, then run install again)"));
+        List<String> entries = new ArrayList<>();
+        if (core != null) entries.add(jarRef(core));
+        entries.add(jarRef(dir));
+        editLauncher(launcher, entries, true);
+        System.out.println("DONE. Start the game, enable the mods 'Real Body Shape' and 'Real Body Shape - Zombie Bodies' (+ 'Zombie Dismemberment' if you like), then check console.txt for '[RBS hook] ready (classpath)'.");
+        System.out.println("     New versions of Real Body Shape come with the Workshop item: no new download here. After a game update run install.bat again.");
+    }
+
+    static final String PATCH_DIR = "patch";
+    static final String CORE_JAR = "rbs_core.jar";
+    static final String WORKSHOP_ID = "3830730496";
+
+    /** the patch folder (~/Zomboid/RealBodyShape/patch) */
+    static Path patchDir() {
+        return Paths.get(System.getProperty("user.home"), "Zomboid", "RealBodyShape", PATCH_DIR);
+    }
+
+    /**
+     * (re)writes the patch folder: the patched game classes, the other classes of their packages, our own classes
+     * (the fallback copy), and what they were made from (source.sha256: the game classes; specs.sha256: the patch's
+     * list of methods). Each file written beside itself and moved over the old one: a folder's files are not held open
+     * by the JVM, so this works while the game runs (PatchUpdate). verify: check the new bytecode with the JVM first
+     */
+    static void buildPatchDir(Path gameJar, Path dir, Map<String, byte[]> own, boolean verify) throws Exception {
         Map<String, byte[]> patched = new HashMap<>();
         Map<String, byte[]> mates;
         List<String> hashes = new ArrayList<>();
@@ -87,18 +125,52 @@ public final class MakePatch {
             for (Map.Entry<String, byte[]> e : mates.entrySet()) hashes.add(e.getKey() + "=" + RBSHook.sha256(e.getValue()));
             System.out.println("copied   : " + mates.size() + " other classes of the same packages, unchanged");
         }
-        verify(patched, gameJar);
-        Files.createDirectories(installDir);
-        try (ZipOutputStream z = new ZipOutputStream(Files.newOutputStream(jar))) {
-            for (Map.Entry<String, byte[]> e : patched.entrySet()) put(z, e.getKey(), e.getValue());
-            for (Map.Entry<String, byte[]> e : mates.entrySet()) put(z, e.getKey(), e.getValue());
-            for (Map.Entry<String, byte[]> e : ownClasses().entrySet()) put(z, e.getKey(), e.getValue());
-            put(z, "rbs/source.sha256", (String.join("\n", hashes) + "\n").getBytes(StandardCharsets.UTF_8));
-            put(z, "rbs/source.txt", (gameJar + "\nsize=" + Files.size(gameJar) + "\nmtime=" + Files.getLastModifiedTime(gameJar).toMillis() + "\n").getBytes(StandardCharsets.UTF_8));
+        if (verify) verify(patched, gameJar);
+        Map<String, byte[]> files = new HashMap<>(patched);
+        files.putAll(mates);
+        files.putAll(own);
+        files.put("rbs/source.sha256", (String.join("\n", hashes) + "\n").getBytes(StandardCharsets.UTF_8));
+        files.put("rbs/source.txt", (gameJar + "\nsize=" + Files.size(gameJar) + "\nmtime=" + Files.getLastModifiedTime(gameJar).toMillis() + "\n").getBytes(StandardCharsets.UTF_8));
+        files.put("rbs/specs.sha256", (specsHash() + "\n").getBytes(StandardCharsets.UTF_8));
+        Files.createDirectories(dir);
+        for (Map.Entry<String, byte[]> e : files.entrySet()) {
+            Path f = dir.resolve(e.getKey());
+            Files.createDirectories(f.getParent());
+            Path tmp = f.resolveSibling(f.getFileName() + ".tmp");
+            Files.write(tmp, e.getValue());
+            Files.move(tmp, f, StandardCopyOption.REPLACE_EXISTING);
         }
-        System.out.println("written  : " + jar + " (" + Files.size(jar) / 1024 + " KB)");
-        editLauncher(launcher, jar, true);
-        System.out.println("DONE. Start the game, enable the mods 'Real Body Shape' and 'Real Body Shape - Zombie Bodies' (+ 'Zombie Dismemberment' if you like), then check console.txt for '[RBS hook] ready'.");
+        System.out.println("written  : " + dir + " (" + files.size() + " files)");
+    }
+
+    /** what the patch changes in the game (RBSAgent.SPECS), hashed: a newer rbs_core.jar with other methods rebuilds */
+    static String specsHash() throws Exception {
+        StringBuilder b = new StringBuilder();
+        for (String[] spec : RBSAgent.SPECS) b.append(java.util.Arrays.toString(spec)).append('\n');
+        return RBSHook.sha256(b.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** rbs_core.jar of the subscribed Workshop item (Steam's library with the game, then the others), else a local copy */
+    static Path findCoreJar(Path game) {
+        List<Path> libs = new ArrayList<>();
+        Path abs = game.toAbsolutePath().normalize();
+        Path steamapps = abs.getParent() == null ? null : abs.getParent().getParent();
+        if (steamapps != null) {
+            libs.add(steamapps);
+            Path vdf = steamapps.resolve("libraryfolders.vdf");
+            if (Files.exists(vdf)) {
+                try {
+                    Matcher m = Pattern.compile("\"path\"\\s*\"([^\"]+)\"").matcher(new String(Files.readAllBytes(vdf), StandardCharsets.UTF_8));
+                    while (m.find()) libs.add(Paths.get(m.group(1).replace("\\\\", "\\")).resolve("steamapps"));
+                } catch (IOException ignored) {}
+            }
+        }
+        for (Path lib : libs) {
+            Path f = lib.resolve("workshop/content/108600/" + WORKSHOP_ID + "/mods/RealBodyShape/42/media/java/" + CORE_JAR);
+            if (Files.exists(f)) return f;
+        }
+        Path local = Paths.get(System.getProperty("user.home"), "Zomboid", "mods", "RealBodyShape", "42", "media", "java", CORE_JAR);
+        return Files.exists(local) ? local : null;
     }
 
     /**
@@ -186,11 +258,16 @@ public final class MakePatch {
         return jar.toAbsolutePath().toString().replace('\\', '/');
     }
 
-    static void editLauncher(Path launcher, Path jar, boolean add) throws IOException {
+    static void editLauncher(Path launcher, List<String> entries, boolean add) throws IOException {
         if (!Files.exists(launcher)) throw new IOException(launcher + " not found");
         String text = new String(Files.readAllBytes(launcher), StandardCharsets.UTF_8);
         Path backup = launcher.resolveSibling(LAUNCHER + ".rbs_backup");
-        if (!Files.exists(backup)) Files.copy(launcher, backup, StandardCopyOption.COPY_ATTRIBUTES);
+        try {
+            if (!Files.exists(backup)) Files.copy(launcher, backup, StandardCopyOption.COPY_ATTRIBUTES);
+        } catch (java.nio.file.AccessDeniedException e) {
+            throw new IOException("Windows does not let this window write in " + launcher.getParent()
+                    + " - right-click install.bat > Run as administrator", e);
+        }
         String cleaned = removeOurs(text);
         if (add) {
             Matcher m = Pattern.compile("\"classpath\"\\s*:\\s*\\[").matcher(cleaned);
@@ -201,18 +278,28 @@ public final class MakePatch {
             if (same.lookingAt()) {
                 // the array on one line (ZombieBuddy's installer writes it so): [ "ours", ".", ... ]
                 at = same.end();
-                cleaned = cleaned.substring(0, at) + "\"" + jarRef(jar) + "\", " + cleaned.substring(at);
+                StringBuilder ins = new StringBuilder();
+                for (String e : entries) ins.append('"').append(e).append("\", ");
+                cleaned = cleaned.substring(0, at) + ins + cleaned.substring(at);
             } else {
                 // one entry per line (the game's own file)
                 Matcher ind = Pattern.compile("\\r?\\n([ \\t]*)").matcher(cleaned);
                 String indent = ind.find(at) ? ind.group(1) : "        ";
                 String nl = cleaned.contains("\r\n") ? "\r\n" : "\n";
-                cleaned = cleaned.substring(0, at) + nl + indent + "\"" + jarRef(jar) + "\"," + cleaned.substring(at);
+                StringBuilder ins = new StringBuilder();
+                for (String e : entries) ins.append(nl).append(indent).append('"').append(e).append("\",");
+                cleaned = cleaned.substring(0, at) + ins + cleaned.substring(at);
             }
         }
         if (!cleaned.equals(text)) {
-            Files.write(launcher, cleaned.getBytes(StandardCharsets.UTF_8));
-            System.out.println((add ? "launcher : " + jarRef(jar) + " added first in \"classpath\" of " : "launcher : patch removed from ") + launcher);
+            try {
+                Files.write(launcher, cleaned.getBytes(StandardCharsets.UTF_8));
+            } catch (java.nio.file.AccessDeniedException e) {
+                // a game under Program Files with its rights narrowed: Windows lets only an administrator write there
+                throw new IOException("Windows does not let this window change " + launcher
+                        + " - right-click install.bat > Run as administrator", e);
+            }
+            System.out.println((add ? "launcher : " + String.join(" + ", entries) + " added first in \"classpath\" of " : "launcher : patch removed from ") + launcher);
             System.out.println("backup   : " + backup);
         } else {
             System.out.println("launcher : nothing to change in " + launcher);
@@ -226,7 +313,8 @@ public final class MakePatch {
      */
     static String removeOurs(String text) {
         String out = text;
-        for (String ours : new String[]{"\"[^\"\\r\\n]*rbs_patch\\.jar\"", "\"-javaagent:[^\"\\r\\n]*rbs_agent\\.jar\""}) {
+        for (String ours : new String[]{"\"[^\"\\r\\n]*rbs_patch\\.jar\"", "\"-javaagent:[^\"\\r\\n]*rbs_agent\\.jar\"",
+                "\"[^\"\\r\\n]*rbs_core\\.jar\"", "\"[^\"\\r\\n]*/Zomboid/RealBodyShape/patch/?\""}) {
             out = out.replaceAll("(?m)^[ \\t]*" + ours + "\\s*,?[ \\t]*\\r?\\n", "");
             out = out.replaceAll(ours + "[ \\t]*,[ \\t]*", "");        // first or middle of a one-line array
             out = out.replaceAll(",[ \\t]*" + ours, "");               // last of a one-line array
@@ -244,18 +332,29 @@ public final class MakePatch {
     // ------------------------------------------------------------------ status
     static void status(Path game, Path jar, Path launcher) throws Exception {
         String text = Files.exists(launcher) ? new String(Files.readAllBytes(launcher), StandardCharsets.UTF_8) : "";
-        boolean listed = text.contains("rbs_patch.jar");
+        boolean listed = text.contains("rbs_patch.jar") || text.contains("/Zomboid/RealBodyShape/patch");
+        System.out.println("our code : " + (text.contains("rbs_core.jar") ? "the Workshop item's rbs_core.jar (updated by Steam)" : "the copy from install time"));
+        if (Files.isDirectory(patchDir())) jar = patchDir();
         System.out.println("launcher : " + launcher + " -> " + (listed ? "patch listed in classpath" : "patch NOT installed"));
         if (text.contains("-javaagent:") && text.contains("rbs_agent.jar"))
             System.out.println("WARNING  : an old -javaagent line is still in vmArgs (the game would not start) - run uninstall then install");
         System.out.println("jar      : " + jar + " -> " + (Files.exists(jar) ? "present" : "missing"));
         if (Files.exists(jar)) {
-            try (JarFile jf = new JarFile(jar.toFile()); JarFile gj = new JarFile(game.resolve("projectzomboid.jar").toFile())) {
-                JarEntry e = jf.getJarEntry("rbs/source.sha256");
+            try (JarFile gj = new JarFile(game.resolve("projectzomboid.jar").toFile())) {
+                byte[] src = null;
+                if (Files.isDirectory(jar)) {
+                    Path f = jar.resolve("rbs/source.sha256");
+                    if (Files.exists(f)) src = Files.readAllBytes(f);
+                } else {
+                    try (JarFile jf = new JarFile(jar.toFile())) {
+                        JarEntry e = jf.getJarEntry("rbs/source.sha256");
+                        if (e != null) src = jf.getInputStream(e).readAllBytes();
+                    }
+                }
                 List<String> stale = new ArrayList<>();
                 int n = 0;
-                if (e != null) {
-                    for (String line : new String(jf.getInputStream(e).readAllBytes(), StandardCharsets.UTF_8).split("\n")) {
+                if (src != null) {
+                    for (String line : new String(src, StandardCharsets.UTF_8).split("\n")) {
                         int eq = line.indexOf('=');
                         if (eq < 0) continue;
                         n++;
