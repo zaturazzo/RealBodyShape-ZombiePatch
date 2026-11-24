@@ -16,9 +16,10 @@ import java.util.WeakHashMap;
  * The game's animations are made for its 68 kg body. Here, after the pose (and the zombie height), each upper arm -
  * with the forearm, the hand and the fingers under it, and the prop bone of what that hand holds - is turned out about
  * its shoulder, in the body's frontal plane, by what this pose needs (needed: the arm's points against the trunk's
- * outline at that weight, ArmSpreadProfile / water/arm_profile.py). Only while the arm hangs: in full when the upper
- * arm points within FULL of straight down, nothing beyond NONE (raised, aiming, swinging, carrying in front are left
- * as they are); never with both hands together. Who: the local player (its amount from PlayerFit, the clothes' gap
+ * outline at that weight, ArmSpreadProfile / water/arm_profile.py), only where the arm meets the trunk's side (not a
+ * forearm across the chest, a hand on the belly), changing as smoothly as the pose. Only while the arm hangs: in full
+ * when the upper arm points within FULL of straight down, nothing beyond NONE (raised, aiming, swinging, carrying in
+ * front are left as they are); never with both hands together. Who: the local player (its amount from PlayerFit, the clothes' gap
  * from armroom=) and zombies by their body (Fat / Obese). Model-space matrices, like GripIK.
  */
 final class ArmSpread {
@@ -45,6 +46,49 @@ final class ArmSpread {
 
     /** hands closer than this x the upper arm: held together; a prop this close to a hand: in it */
     static final float HANDS_JOINED = 0.8f, PROP_NEAR = 0.9f;
+
+    /**
+     * The angle follows its target at most this fast (degrees a second; user 2026-11-24 "กระตุก"): an arm swung off the
+     * trunk's side in a few frames (raised to fold across the chest) lets go of its angle over a few more instead of at
+     * once. The walks and runs change theirs slower than this. Per AnimationPlayer; a pose not seen for STALE starts
+     * at its target.
+     */
+    static final float RATE = 240f, STALE = 0.25f;
+
+    /**
+     * Degrees taken off what the pose needs, [sex] (0 female, 1 male; user 2026-11-24 on the new male water body:
+     * "ลดการกางลงหน่อย 2-4 องศา" - 140 kg in a vest: 13 / 11 -> 10 / 8). Not in arm_profile.py's fit (it would only
+     * fit the margin back up).
+     */
+    static final float[] TRIM = { 0f, 3f };
+
+    private static final class Follow {
+        final float[] deg = new float[2];
+        long at;
+    }
+
+    private static final Map<Object, Follow> follow = Collections.synchronizedMap(new WeakHashMap<>());
+
+    /** the angles to use this frame (in place in want), stepped toward want from last time's */
+    private static void follow(Object player, float[] want) {
+        Follow s = follow.get(player);
+        long now = System.nanoTime();
+        if (s == null) {
+            s = new Follow();
+            follow.put(player, s);
+            s.at = now - (long) (STALE * 2e9);
+        }
+        float dt = (now - s.at) / 1e9f;
+        s.at = now;
+        for (int i = 0; i < 2; i++) {
+            if (dt > STALE || dt < 0f) s.deg[i] = want[i];
+            else {
+                float step = RATE * dt, d = want[i] - s.deg[i];
+                s.deg[i] += Math.max(-step, Math.min(step, d));
+            }
+            want[i] = s.deg[i];
+        }
+    }
 
     private static float dist(float[] a, float[] b) {
         float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
@@ -96,8 +140,13 @@ final class ArmSpread {
             float arm = dist(pos(player, k.upper[0], m), pos(player, k.fore[0], m));
             if (arm < 1e-5f) return;
             float[][] hands = { pos(player, k.hand[0], m), pos(player, k.hand[1], m) };
-            // both hands on one thing (a two-handed weapon or a box held low): neither arm turns, the grip stays whole
-            if (dist(hands[0], hands[1]) < HANDS_JOINED * arm) return;
+            // both hands on one thing (a two-handed weapon or a box held low): neither arm turns, the grip stays whole -
+            // faded in over HANDS_FADE (not a step as the hands come apart)
+            float together = smooth((dist(hands[0], hands[1]) / arm - HANDS_JOINED) / HANDS_FADE);
+            if (together <= 0f) {
+                follow.remove(player);                           // the grip whole now; the next spread starts from 0
+                return;
+            }
             // what a hand holds hangs on a prop bone (Bip01_Prop1 / Prop2), a child of the root, not of the hand: it
             // turns with the arm whose hand it is at, the nearer one (user 2026-11-24: "กางแล้วมือหลุดจาก item"; the
             // right hand's Prop1 sits 8-17 cm from its hand bone in the walks with a weapon)
@@ -114,8 +163,11 @@ final class ArmSpread {
             float[] rP = new float[9], tP = new float[3], rS = new float[9], tS = new float[3];
             rt(player, k.pelvis, m, rP, tP);
             rt(player, k.spine, m, rS, tS);
+            float[] want = new float[2];
+            float[][] sh = new float[2][];
             for (int side = 0; side < 2; side++) {
                 float[] p = pos(player, k.upper[side], m), e = pos(player, k.fore[side], m);
+                sh[side] = p;
                 float dx = e[0] - p[0], dy = e[1] - p[1], dz = e[2] - p[2];
                 float len = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
                 if (len < 1e-5f) continue;
@@ -124,10 +176,16 @@ final class ArmSpread {
                 f = f * f * (3f - 2f * f);
                 if (f <= 0f) continue;
                 float deg = needed(body, sex, side, amount, clear, p, e, hands[side],
-                        k.finger1[side] >= 0 ? pos(player, k.finger1[side], m) : null, rP, tP, rS, tS);
-                if (deg < 0.3f) continue;
+                        k.finger1[side] >= 0 ? pos(player, k.finger1[side], m) : null, rP, tP, rS, tS) * f;
+                want[side] = Math.max(0f, deg - TRIM[sex]) * together;
+            }
+            follow(player, want);
+            for (int side = 0; side < 2; side++) {
+                float deg = want[side];
+                float[] p = sh[side];
+                if (deg < 0.01f || p == null) continue;
                 // out = away from the body's middle: the shoulder's side (the game's .x: the character's left at +x)
-                float a = (float) Math.toRadians(deg * f) * (p[0] >= 0f ? 1f : -1f);
+                float a = (float) Math.toRadians(deg) * (p[0] >= 0f ? 1f : -1f);
                 float c = (float) Math.cos(a), s = (float) Math.sin(a);
                 float[] q = { c, -s, 0f, s, c, 0f, 0f, 0f, 1f };          // about the body's front-back axis (z)
                 rotate(player, k.tree[side], q, p, m);
@@ -135,7 +193,7 @@ final class ArmSpread {
                     if (propSide[i] == side) rotate(player, new int[] { k.prop[i] }, q, p, m);
                 }
                 turns++;
-                if (deg * f > largest) largest = deg * f;
+                if (deg > largest) largest = deg;
             }
             long now = System.nanoTime();
             if (turns > 0 && now > summaryAt) {
@@ -181,30 +239,26 @@ final class ArmSpread {
         int i0 = Math.max(0, i1 - 1);
         float[][][][] o = ArmSpreadProfile.outline(body, sex);
         float[] r0 = ArmSpreadProfile.RADIUS[body][sex][i0][side], r1 = ArmSpreadProfile.RADIUS[body][sex][i1][side];
+        float[] ex = ArmSpreadProfile.EXTRA[body][sex];
+        float extra = ex[i0] + (ex[i1] - ex[i0]) * w;
         float cm = ArmSpreadProfile.CM[body][sex], y0 = ArmSpreadProfile.Y0[body][sex], sx = side == 0 ? 1f : -1f;
-        int nb = ArmSpreadProfile.NB, zs = ArmSpreadProfile.ZS;
+        int nb = ArmSpreadProfile.NB;
         float[][] pts = { e, mid(e, h), h, f1 != null ? mid(h, f1) : h };
         float best = 0f;
         for (int j = 0; j < 4; j++) {
             float[] q = pts[j];
             float r = r0[j] + (r1[j] - r0[j]) * w;
-            float[] c = toRest(q, sex, rP, tP, rS, tS);
-            int kb = (int) Math.floor((c[1] - y0) * cm / ArmSpreadProfile.BIN);
-            if (kb < 0 || kb >= nb) continue;
-            float reach = 0f;
-            for (int b = kb - 1; b <= kb + 1; b++) {
-                if (b < 0 || b >= nb) continue;
-                float[] a0 = o[i0][side][b], a1 = o[i1][side][b];
-                float z0 = a0[0] + (a1[0] - a0[0]) * w, z1 = a0[1] + (a1[1] - a0[1]) * w;
-                if (!(z1 > z0) || c[2] < z0 - r / cm || c[2] > z1 + r / cm) continue;
-                float zz = Math.max(0f, Math.min(zs - 1f, (c[2] - z0) / (z1 - z0) * (zs - 1)));
-                int a = Math.min((int) zz, zs - 2);
-                float t = zz - a;
-                float v0 = a0[2 + a] + (a1[2 + a] - a0[2 + a]) * w, v1 = a0[3 + a] + (a1[3 + a] - a0[3 + a]) * w;
-                reach = Math.max(reach, v0 + (v1 - v0) * t);
+            float[] c = toRest(q, sex, cm, rP, tP, rS, tS);
+            float u = (c[1] - y0) * cm / ArmSpreadProfile.BIN - 0.5f;          // in bins, 0 = the first bin's middle
+            float big = r + extra + clear;
+            float push = 0f;
+            for (float off : WINDOW) {
+                int b0 = (int) Math.floor(u + off);
+                float t = u + off - b0;
+                float p0 = b0 >= 0 && b0 < nb ? rowPush(o[i0][side][b0], o[i1][side][b0], w, c, r, big, sx, cm) : 0f;
+                float p1 = b0 + 1 >= 0 && b0 + 1 < nb ? rowPush(o[i0][side][b0 + 1], o[i1][side][b0 + 1], w, c, r, big, sx, cm) : 0f;
+                push = Math.max(push, p0 * (1f - t) + p1 * t);
             }
-            if (reach <= 0f) continue;
-            float push = reach + (r + ArmSpreadProfile.EXTRA[body][sex] + clear) / cm - sx * c[0];
             if (push <= 0f) continue;
             float dx = q[0] - p[0], dy = q[1] - p[1];
             if (gain(dx, dy, sx, MAX_DEG) < push) {
@@ -222,6 +276,40 @@ final class ArmSpread {
         return Math.min(best, MAX_DEG);
     }
 
+    /**
+     * (user 2026-11-24: "การกางแขนพอสุด animation เหมือนมีการกระตุกเล็กน้อย" + "ท่ากอดอกก็แปลกๆด้วย") the angle changes
+     * only as smoothly as the pose: no step where a point crosses a height bin (WINDOW, read between the bins), the
+     * Pelvis -> Spine seam (SPINE_BAND) or the trunk's front; and a point on the trunk's front or back (a forearm across
+     * the chest, a hand on the belly) asks for no turn - turning the arm out only helps where the side is the nearer
+     * way out (SIDE_EXIT). The same sums as water/arm_profile.py.
+     */
+    static final float[] WINDOW = { -1.5f, -0.75f, 0f, 0.75f, 1.5f };
+    static final float SIDE_EXIT_NONE = 0.5f, SIDE_EXIT_ALL = 1.0f, SPINE_BAND = 6f, HANDS_FADE = 0.2f;
+
+    private static float smooth(float t) {
+        t = Math.max(0f, Math.min(1f, t));
+        return t * t * (3f - 2f * t);
+    }
+
+    /** how far out (model units) one height bin of the outline (between two weights) wants a point of radius r, clearance big (cm) */
+    private static float rowPush(float[] a0, float[] a1, float w, float[] c, float r, float big, float sx, float cm) {
+        int zs = ArmSpreadProfile.ZS;
+        float z0 = a0[0] + (a1[0] - a0[0]) * w, z1 = a0[1] + (a1[1] - a0[1]) * w;
+        if (!(z1 > z0)) return 0f;
+        float zz = Math.max(0f, Math.min(zs - 1f, (c[2] - z0) / (z1 - z0) * (zs - 1)));
+        int a = Math.min((int) zz, zs - 2);
+        float t = zz - a;
+        float v0 = a0[2 + a] + (a1[2 + a] - a0[2 + a]) * w, v1 = a0[3 + a] + (a1[3 + a] - a0[3 + a]) * w;
+        float reach = v0 + (v1 - v0) * t;
+        if (reach <= 0f) return 0f;
+        float s = (reach - sx * c[0]) * cm;                  // cm inside the outline's side (< 0: out beyond it)
+        float f = Math.min(c[2] - z0, z1 - c[2]) * cm;      // cm inside its front / back (< 0: in front, behind)
+        if (f + r <= 0f) return 0f;
+        float k = s + r <= 1e-3f ? 1f
+                : smooth(((f + r) / (s + r) - SIDE_EXIT_NONE) / (SIDE_EXIT_ALL - SIDE_EXIT_NONE));
+        return Math.max(0f, (s + big) / cm) * k;
+    }
+
     /** how far out (model x, away from the middle) a point dx, dy from the shoulder goes turning the arm deg out */
     private static float gain(float dx, float dy, float sx, float deg) {
         double a = Math.toRadians(deg) * sx;
@@ -232,10 +320,13 @@ final class ArmSpread {
         return new float[] { (a[0] + b[0]) * 0.5f, (a[1] + b[1]) * 0.5f, (a[2] + b[2]) * 0.5f };
     }
 
-    /** a posed point into the rest pose: through the Pelvis, or the Spine when that lands above the Spine's rest origin */
-    private static float[] toRest(float[] q, int sex, float[] rP, float[] tP, float[] rS, float[] tS) {
+    /** a posed point into the rest pose: through the Pelvis, blending into the Spine over SPINE_BAND round its rest origin */
+    private static float[] toRest(float[] q, int sex, float cm, float[] rP, float[] tP, float[] rS, float[] tS) {
         float[] c = map(q, rP, tP, ArmSpreadProfile.PELVIS_R[sex], ArmSpreadProfile.PELVIS_O[sex]);
-        if (c[1] > ArmSpreadProfile.SPINE_O[sex][1]) c = map(q, rS, tS, ArmSpreadProfile.SPINE_R[sex], ArmSpreadProfile.SPINE_O[sex]);
+        float t = smooth((c[1] - ArmSpreadProfile.SPINE_O[sex][1]) * cm / SPINE_BAND + 0.5f);
+        if (t <= 0f) return c;
+        float[] cs = map(q, rS, tS, ArmSpreadProfile.SPINE_R[sex], ArmSpreadProfile.SPINE_O[sex]);
+        for (int i = 0; i < 3; i++) c[i] += (cs[i] - c[i]) * t;
         return c;
     }
 

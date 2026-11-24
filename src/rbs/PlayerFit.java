@@ -542,15 +542,17 @@ final class PlayerFit {
      * RealBodyShape.knotShares does (the knots leave out amount 0: none there; below the lowest the move goes on in
      * line through 0, above the highest it stays).
      */
-    static void water(float[] p, float amount, float meal) {
+    static void water(float[] p, float amount, float meal, int sex) {
         for (int i = 0; i < p.length; i++) {
             String key = PlayerFitTable.KEYS[i];
             if (key.equals("fat") || key.equals("thin") || key.equals("belly")) p[i] = 0f;
         }
-        float[] knots = PlayerFitTable.KNOTS.length > 0 ? PlayerFitTable.KNOTS[0] : new float[0];
-        float[] meals = PlayerFitTable.MEALS.length > 0 ? PlayerFitTable.MEALS[0] : new float[0];
-        put(p, "w", knotShares(knots, amount, true), 1f);
-        if (meal != 0f) put(p, "m", knotShares(meals, amount, false), meal);
+        int s = Math.max(0, Math.min(sex, PlayerFitTable.KNOTS.length - 1));
+        float[] knots = PlayerFitTable.KNOTS.length > 0 ? PlayerFitTable.KNOTS[s] : new float[0];
+        float[] meals = PlayerFitTable.MEALS.length > 0 ? PlayerFitTable.MEALS[Math.min(s, PlayerFitTable.MEALS.length - 1)] : new float[0];
+        float zeroAt = PlayerFitTable.ZERO.length > s ? PlayerFitTable.ZERO[s] : 0f;
+        put(p, "w", knotShares(knots, amount, true, zeroAt), 1f);
+        if (meal != 0f) put(p, "m", knotShares(meals, amount, false, 0f), meal);
     }
 
     private static void put(float[] p, String pre, float[] shares, float scale) {
@@ -561,15 +563,18 @@ final class PlayerFit {
         }
     }
 
-    /** share of each knot (index k = array k + 1) for an amount; zero: the point at amount 0 (no array) is between */
-    static float[] knotShares(float[] knots, float a, boolean zero) {
+    /**
+     * share of each knot (index k = array k + 1) for an amount; zero: the point at amount zeroAt (the game's model, no
+     * array: 0 = 68 kg, below for a 55 kg female model) is between
+     */
+    static float[] knotShares(float[] knots, float a, boolean zero, float zeroAt) {
         int n = knots.length;
         float[] out = new float[n];
         if (n == 0) return out;
         float[] xs = new float[n + (zero ? 1 : 0)];
         int[] id = new int[xs.length];
         for (int i = 0; i < n; i++) { xs[i] = knots[i]; id[i] = i; }
-        if (zero) { xs[n] = 0f; id[n] = -1; }
+        if (zero) { xs[n] = zeroAt; id[n] = -1; }
         for (int i = 1; i < xs.length; i++) {                   // sort by amount (few points)
             for (int j = i; j > 0 && xs[j - 1] > xs[j]; j--) {
                 float t = xs[j]; xs[j] = xs[j - 1]; xs[j - 1] = t;
@@ -578,7 +583,7 @@ final class PlayerFit {
         }
         int last = xs.length - 1;
         if (a <= xs[0]) {
-            if (id[0] >= 0) out[id[0]] = (zero && xs[0] < 0f) ? a / xs[0] : 1f;
+            if (id[0] >= 0) out[id[0]] = (zero && xs[0] < zeroAt) ? (a - zeroAt) / (xs[0] - zeroAt) : 1f;
         } else if (a >= xs[last]) {
             if (id[last] >= 0) out[id[last]] = 1f;
         } else {
@@ -822,7 +827,9 @@ final class PlayerFit {
                     else p[i] = v.getOrDefault(key, 0f);
                 }
                 amount = v.getOrDefault("amount", 0f);
-                if (v.getOrDefault("water", 0f) > 0.5f) water(p, v.getOrDefault("amount", 0f), v.getOrDefault("meal", 0f));
+                // the knots by sex (a 55 kg female model has a 68 kg knot of its own, 2026-11-25); an older stamp: the first
+                int sexRow = v.getOrDefault("female", 1f) > 0.5f ? 0 : 1;
+                if (v.getOrDefault("water", 0f) > 0.5f) water(p, v.getOrDefault("amount", 0f), v.getOrDefault("meal", 0f), sexRow);
                 if (on) RBSHook.log(String.format(Locale.ROOT, "rough fit: shape %.1f kg (amount %.4f, belly %.4f, chest %.4f, arms %.4f, legs %.4f, bust %.4f, hips %.4f, waist %.4f)",
                         v.getOrDefault("weight", 0f), v.getOrDefault("amount", 0f), p[2], p[3], p[4], p[5], p[6], p[7], p[8]));
             }
