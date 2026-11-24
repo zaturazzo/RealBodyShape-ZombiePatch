@@ -14,12 +14,12 @@ import java.util.WeakHashMap;
  * 2026-11-24: "การวางแขนข้างลำตัวให้ไม่จมได้ไหม").
  *
  * The game's animations are made for its 68 kg body. Here, after the pose (and the zombie height), each upper arm -
- * with the forearm, the hand and the fingers under it - is turned out about its shoulder, in the body's frontal plane,
- * by the angle the body grew under a hanging arm (ArmSpreadTable, water/arm_spread.py: the trunk's side out plus the
- * arm's own thickening, from the elbow down to the wrist, less the idle's own gap). Only while the arm hangs: in full
- * when the upper arm points within FULL of straight down, nothing beyond NONE (raised, aiming, swinging, carrying in
- * front are left as they are). Who: the local player (its shape from PlayerFit: the amount and the keys that widen
- * the trunk or thicken the arm) and zombies by their body (Fat / Obese). Model-space matrices, like GripIK.
+ * with the forearm, the hand and the fingers under it, and the prop bone of what that hand holds - is turned out about
+ * its shoulder, in the body's frontal plane, by what this pose needs (needed: the arm's points against the trunk's
+ * outline at that weight, ArmSpreadProfile / water/arm_profile.py). Only while the arm hangs: in full when the upper
+ * arm points within FULL of straight down, nothing beyond NONE (raised, aiming, swinging, carrying in front are left
+ * as they are); never with both hands together. Who: the local player (its amount from PlayerFit, the clothes' gap
+ * from armroom=) and zombies by their body (Fat / Obese). Model-space matrices, like GripIK.
  */
 final class ArmSpread {
 
@@ -43,9 +43,18 @@ final class ArmSpread {
 
     private ArmSpread() {}
 
+    /** hands closer than this x the upper arm: held together; a prop this close to a hand: in it */
+    static final float HANDS_JOINED = 0.8f, PROP_NEAR = 0.9f;
+
+    private static float dist(float[] a, float[] b) {
+        float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+        return (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
     static final class Skel {
         int n;
-        int[] upper = { -1, -1 }, fore = { -1, -1 };
+        int[] upper = { -1, -1 }, fore = { -1, -1 }, hand = { -1, -1 }, prop = { -1, -1 }, finger1 = { -1, -1 };
+        int pelvis = -1, spine = -1;
         int[][] tree = new int[2][];
         boolean ok;
     }
@@ -59,12 +68,10 @@ final class ArmSpread {
             Object chr = apCharacter.invoke(player);
             if (chr == null) return;
             float amount;
-            float[] keys = null;
             boolean female, isPl = playerClass.isInstance(chr);
             if (isPl) {
                 if (!(Boolean) isLocal.invoke(chr)) return;
                 amount = PlayerFit.amountNow();
-                keys = PlayerFit.values(ArmSpreadTable.KEYS);
                 // (RBSHook.visualOf is the zombie's getHumanVisual: on the player it threw, and no player's arm turned)
                 female = (Boolean) plFemale.invoke(chr);
             } else if (zombieClass.isInstance(chr)) {
@@ -80,16 +87,34 @@ final class ArmSpread {
             int body = PlayerFit.tombNow() ? 1 : 0, sex = female ? 0 : 1;
             float clear = isPl ? PlayerFit.armRoomNow() : ZOMBIE_CLEAR;
             if (clear <= 0f) clear = DEFAULT_CLEAR;
-            float[] degs = { degrees(body, sex, 0, amount, clear, keys), degrees(body, sex, 1, amount, clear, keys) };
-            if (degs[0] < 0.3f && degs[1] < 0.3f) return;
+            if (amount <= 0f) return;                          // a slim body's arms hang as the game made them
             Object data = apSkinning.invoke(player);
             if (data == null) return;
             Skel k = skelFor(data);
             if (!k.ok || (Integer) apCount.invoke(player) != k.n) return;
             float[] m = M.get();
+            float arm = dist(pos(player, k.upper[0], m), pos(player, k.fore[0], m));
+            if (arm < 1e-5f) return;
+            float[][] hands = { pos(player, k.hand[0], m), pos(player, k.hand[1], m) };
+            // both hands on one thing (a two-handed weapon or a box held low): neither arm turns, the grip stays whole
+            if (dist(hands[0], hands[1]) < HANDS_JOINED * arm) return;
+            // what a hand holds hangs on a prop bone (Bip01_Prop1 / Prop2), a child of the root, not of the hand: it
+            // turns with the arm whose hand it is at, the nearer one (user 2026-11-24: "กางแล้วมือหลุดจาก item"; the
+            // right hand's Prop1 sits 8-17 cm from its hand bone in the walks with a weapon)
+            int[] propSide = new int[k.prop.length];
+            for (int i = 0; i < propSide.length; i++) {
+                propSide[i] = -1;
+                if (k.prop[i] < 0) continue;
+                float[] pp = pos(player, k.prop[i], m);
+                float d0 = dist(pp, hands[0]), d1 = dist(pp, hands[1]);
+                int s = d0 <= d1 ? 0 : 1;
+                if (Math.min(d0, d1) < PROP_NEAR * arm) propSide[i] = s;
+            }
+            // the trunk's bones as posed: the arm's points are looked at in the rest pose through them
+            float[] rP = new float[9], tP = new float[3], rS = new float[9], tS = new float[3];
+            rt(player, k.pelvis, m, rP, tP);
+            rt(player, k.spine, m, rS, tS);
             for (int side = 0; side < 2; side++) {
-                float deg = degs[side];
-                if (deg < 0.3f) continue;
                 float[] p = pos(player, k.upper[side], m), e = pos(player, k.fore[side], m);
                 float dx = e[0] - p[0], dy = e[1] - p[1], dz = e[2] - p[2];
                 float len = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
@@ -98,11 +123,17 @@ final class ArmSpread {
                 float f = fromDown <= FULL ? 1f : fromDown >= NONE ? 0f : 1f - (fromDown - FULL) / (NONE - FULL);
                 f = f * f * (3f - 2f * f);
                 if (f <= 0f) continue;
+                float deg = needed(body, sex, side, amount, clear, p, e, hands[side],
+                        k.finger1[side] >= 0 ? pos(player, k.finger1[side], m) : null, rP, tP, rS, tS);
+                if (deg < 0.3f) continue;
                 // out = away from the body's middle: the shoulder's side (the game's .x: the character's left at +x)
                 float a = (float) Math.toRadians(deg * f) * (p[0] >= 0f ? 1f : -1f);
                 float c = (float) Math.cos(a), s = (float) Math.sin(a);
                 float[] q = { c, -s, 0f, s, c, 0f, 0f, 0f, 1f };          // about the body's front-back axis (z)
                 rotate(player, k.tree[side], q, p, m);
+                for (int i = 0; i < propSide.length; i++) {
+                    if (propSide[i] == side) rotate(player, new int[] { k.prop[i] }, q, p, m);
+                }
                 turns++;
                 if (deg * f > largest) largest = deg * f;
             }
@@ -125,43 +156,106 @@ final class ArmSpread {
     static final float ZOMBIE_CLEAR = 1.5f, DEFAULT_CLEAR = 1.5f;
 
     /**
-     * One arm's angle (user 2026-11-24: the first table, a guessed 2 cm gap in the idle and the trunk's widest growth
-     * for both arms, sent them up far too high once clothes were added): ArmSpreadTable from the game's own idle
-     * (water/arm_idle.py: the body built for each weight, posed over the idle loop, the arm turned out until the forearm
-     * and the hand keep that gap off the trunk), per body (the game's / Tomb's), sex and arm, by the amount (none at 0
-     * and below, straight to the first knot) and the gap; plus the keys that widen the trunk or thicken the arm.
+     * One arm's angle by the pose (user 2026-11-24: one angle per weight, measured in Kate_Idle, sent the arms far out
+     * holding a bag, a flashlight, an umbrella, walking - "กางตามท่าจริง"): the elbow, mid forearm, wrist and mid hand,
+     * each brought into the rest pose through the trunk bone beside it (the Pelvis, or the Spine above the Spine's rest
+     * origin), against the trunk's outline as the body stands at that weight (ArmSpreadProfile, water/arm_profile.py):
+     * how far the outline reaches out there, plus the arm's thickness there, EXTRA and the clothes' gap, less how far
+     * out the point is - the angle about the shoulder that moves the point out by that much. The largest of the four;
+     * 0 when the arm is clear (held out, in front, behind). Checked against the true skinned arm in 26 of the game's
+     * poses (arm_profile.py --check).
      */
-    static float degrees(int body, int sex, int arm, float amount, float clear, float[] keys) {
-        float[] am = ArmSpreadTable.AMOUNTS;
-        float[][] dg = ArmSpreadTable.DEG[body][sex][arm];
-        float d = 0f;
-        if (amount > 0f && am.length > 0) {
-            if (amount <= am[0]) d = byClear(dg[0], clear) * amount / am[0];
-            else if (amount >= am[am.length - 1]) d = byClear(dg[am.length - 1], clear);
-            else {
-                for (int i = 1; i < am.length; i++) {
-                    if (amount <= am[i]) {
-                        float a0 = byClear(dg[i - 1], clear), a1 = byClear(dg[i], clear);
-                        d = a0 + (a1 - a0) * (amount - am[i - 1]) / (am[i] - am[i - 1]);
-                        break;
-                    }
-                }
+    static float needed(int body, int sex, int side, float amount, float clear, float[] p, float[] e, float[] h,
+                        float[] f1, float[] rP, float[] tP, float[] rS, float[] tS) {
+        float[] am = ArmSpreadProfile.AMOUNTS;
+        int i1;
+        float w;
+        if (amount >= am[am.length - 1]) {
+            i1 = am.length - 1;
+            w = 1f;
+        } else {
+            i1 = 1;
+            while (i1 < am.length - 1 && amount > am[i1]) i1++;
+            w = (amount - am[i1 - 1]) / (am[i1] - am[i1 - 1]);
+        }
+        int i0 = Math.max(0, i1 - 1);
+        float[][][][] o = ArmSpreadProfile.outline(body, sex);
+        float[] r0 = ArmSpreadProfile.RADIUS[body][sex][i0][side], r1 = ArmSpreadProfile.RADIUS[body][sex][i1][side];
+        float cm = ArmSpreadProfile.CM[body][sex], y0 = ArmSpreadProfile.Y0[body][sex], sx = side == 0 ? 1f : -1f;
+        int nb = ArmSpreadProfile.NB, zs = ArmSpreadProfile.ZS;
+        float[][] pts = { e, mid(e, h), h, f1 != null ? mid(h, f1) : h };
+        float best = 0f;
+        for (int j = 0; j < 4; j++) {
+            float[] q = pts[j];
+            float r = r0[j] + (r1[j] - r0[j]) * w;
+            float[] c = toRest(q, sex, rP, tP, rS, tS);
+            int kb = (int) Math.floor((c[1] - y0) * cm / ArmSpreadProfile.BIN);
+            if (kb < 0 || kb >= nb) continue;
+            float reach = 0f;
+            for (int b = kb - 1; b <= kb + 1; b++) {
+                if (b < 0 || b >= nb) continue;
+                float[] a0 = o[i0][side][b], a1 = o[i1][side][b];
+                float z0 = a0[0] + (a1[0] - a0[0]) * w, z1 = a0[1] + (a1[1] - a0[1]) * w;
+                if (!(z1 > z0) || c[2] < z0 - r / cm || c[2] > z1 + r / cm) continue;
+                float zz = Math.max(0f, Math.min(zs - 1f, (c[2] - z0) / (z1 - z0) * (zs - 1)));
+                int a = Math.min((int) zz, zs - 2);
+                float t = zz - a;
+                float v0 = a0[2 + a] + (a1[2 + a] - a0[2 + a]) * w, v1 = a0[3 + a] + (a1[3 + a] - a0[3 + a]) * w;
+                reach = Math.max(reach, v0 + (v1 - v0) * t);
             }
+            if (reach <= 0f) continue;
+            float push = reach + (r + ArmSpreadProfile.EXTRA[body][sex] + clear) / cm - sx * c[0];
+            if (push <= 0f) continue;
+            float dx = q[0] - p[0], dy = q[1] - p[1];
+            if (gain(dx, dy, sx, MAX_DEG) < push) {
+                best = MAX_DEG;
+                continue;
+            }
+            float lo = 0f, hi = MAX_DEG;
+            for (int it = 0; it < 14; it++) {
+                float md = (lo + hi) * 0.5f;
+                if (gain(dx, dy, sx, md) < push) lo = md;
+                else hi = md;
+            }
+            best = Math.max(best, hi);
         }
-        if (keys != null && d > 0f) {
-            float[] per = ArmSpreadTable.DEG_PER_UNIT[sex];
-            for (int i = 0; i < keys.length && i < per.length; i++) if (keys[i] > 0f) d += keys[i] * per[i];
-        }
-        return Math.min(d, MAX_DEG);
+        return Math.min(best, MAX_DEG);
     }
 
-    private static float byClear(float[] row, float c) {
-        float[] cl = ArmSpreadTable.CLEAR;
-        if (c <= cl[0]) return row[0];
-        for (int i = 1; i < cl.length; i++) {
-            if (c <= cl[i]) return row[i - 1] + (row[i] - row[i - 1]) * (c - cl[i - 1]) / (cl[i] - cl[i - 1]);
+    /** how far out (model x, away from the middle) a point dx, dy from the shoulder goes turning the arm deg out */
+    private static float gain(float dx, float dy, float sx, float deg) {
+        double a = Math.toRadians(deg) * sx;
+        return (float) (sx * ((dx * Math.cos(a) - dy * Math.sin(a)) - dx));
+    }
+
+    private static float[] mid(float[] a, float[] b) {
+        return new float[] { (a[0] + b[0]) * 0.5f, (a[1] + b[1]) * 0.5f, (a[2] + b[2]) * 0.5f };
+    }
+
+    /** a posed point into the rest pose: through the Pelvis, or the Spine when that lands above the Spine's rest origin */
+    private static float[] toRest(float[] q, int sex, float[] rP, float[] tP, float[] rS, float[] tS) {
+        float[] c = map(q, rP, tP, ArmSpreadProfile.PELVIS_R[sex], ArmSpreadProfile.PELVIS_O[sex]);
+        if (c[1] > ArmSpreadProfile.SPINE_O[sex][1]) c = map(q, rS, tS, ArmSpreadProfile.SPINE_R[sex], ArmSpreadProfile.SPINE_O[sex]);
+        return c;
+    }
+
+    /** r, t: the bone as posed (column form, v' = r v + t); R, o: as at rest (row form c = l R + o) */
+    private static float[] map(float[] q, float[] r, float[] t, float[] R, float[] o) {
+        float d0 = q[0] - t[0], d1 = q[1] - t[1], d2 = q[2] - t[2];
+        float[] l = new float[3], c = new float[3];
+        for (int i = 0; i < 3; i++) l[i] = r[i] * d0 + r[3 + i] * d1 + r[6 + i] * d2;
+        for (int j = 0; j < 3; j++) c[j] = l[0] * R[j] + l[1] * R[3 + j] + l[2] * R[6 + j] + o[j];
+        return c;
+    }
+
+    /** a bone's posed rotation (column form, row-major 3x3) and position */
+    private static void rt(Object player, int i, float[] m, float[] r, float[] t) throws Exception {
+        read(apModelAt.invoke(player, i), m);
+        boolean cv = colVec(m);
+        for (int a = 0; a < 3; a++) {
+            for (int b = 0; b < 3; b++) r[a * 3 + b] = cv ? m[b * 4 + a] : m[a * 4 + b];
+            t[a] = cv ? m[12 + a] : m[a * 4 + 3];
         }
-        return row[cl.length - 1];
     }
 
     // ---------------- bones ----------------
@@ -221,8 +315,16 @@ final class ArmSpread {
             else if (x.endsWith("_r_upperarm")) k.upper[1] = i;
             else if (x.endsWith("_l_forearm")) k.fore[0] = i;
             else if (x.endsWith("_r_forearm")) k.fore[1] = i;
+            else if (x.endsWith("_l_hand")) k.hand[0] = i;
+            else if (x.endsWith("_r_hand")) k.hand[1] = i;
+            else if (x.endsWith("_prop1")) k.prop[0] = i;
+            else if (x.endsWith("_prop2")) k.prop[1] = i;
+            else if (x.endsWith("_l_finger1")) k.finger1[0] = i;
+            else if (x.endsWith("_r_finger1")) k.finger1[1] = i;
+            else if (x.endsWith("_pelvis")) k.pelvis = i;
+            else if (x.endsWith("_spine")) k.spine = i;
         }
-        k.ok = true;
+        k.ok = k.pelvis >= 0 && k.spine >= 0 && k.hand[0] >= 0 && k.hand[1] >= 0;
         for (int s = 0; s < 2; s++) {
             if (k.upper[s] < 0 || k.fore[s] < 0) { k.ok = false; continue; }
             k.tree[s] = tree(parent, k.upper[s]);
